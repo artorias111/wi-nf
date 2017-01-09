@@ -1,14 +1,4 @@
 #!/usr/bin/env nextflow
-//directory = '/projects/b1059/data/fastq/WI/dna/processed/**/'
-
-/*
-    Filtering configuration
-*/
-min_depth=3
-qual=30
-mq=40
-dv_dp=0.5
-
 tmpdir = config.tmpdir
 reference = config.reference
 cores = config.cores
@@ -35,8 +25,6 @@ strainJSON.each { SM, RG ->
         strain_set << [SM, k, v[0], v[1], v[2]]
     }
 }
-
-strain_set = strain_set
 
 strain_set_file = Channel.fromPath('strain_set.json')
 
@@ -133,10 +121,13 @@ process merge_bam {
         val SM into merged_SM_coverage
         val SM into merged_SM_individual
         val SM into merged_SM_union
+        val SM into merged_SM_idxstats
         set file("${SM}.bam"), file("${SM}.bam.bai") into merged_bams_for_coverage
         set file("${SM}.bam"), file("${SM}.bam.bai") into merged_bams_individual
         set file("${SM}.bam"), file("${SM}.bam.bai") into merged_bams_union
-
+        set file("${SM}.bam"), file("${SM}.bam.bai") into bams_idxstats
+        file("${SM}.duplicates.txt") into duplicates_file
+        
     """
 
     count=`echo ${bam.join(" ")} | tr ' ' '\\n' | wc -l`
@@ -154,6 +145,58 @@ process merge_bam {
     """
 }
 
+
+
+process idx_stats {
+    
+    input:
+        val SM from merged_SM_idxstats
+        set file("${SM}.bam"), file("${SM}.bam.bai") from bams_idxstats
+    output:
+        file bam_idxstats into bam_idxstats_set
+
+    """
+        samtools idxstats ${SM}.bam | awk '{ print "${SM}\\t" \$0 }' > bam_idxstats
+    """
+}
+
+process combine_idx_stats {
+
+    publishDir analysis_dir, mode: 'copy'
+
+    input:
+        val bam_idxstats from bam_idxstats_set.toSortedList()
+
+    output:
+        file("${date}.bam_idxstats.tsv")
+
+    """
+        echo -e "SM\\treference\\treference_length\\tmapped_reads\\tunmapped_reads" > ${date}.bam_idxstats.tsv
+        cat ${bam_idxstats.join(" ")} >> ${date}.bam_idxstats.tsv
+    """
+
+}
+
+
+process format_duplicates {
+
+    publishDir analysis_dir, mode: 'copy'
+
+    input:
+        val duplicates_set from duplicates_file.toSortedList()
+
+    output:
+        file("${date}.duplicates_summary.tsv")
+
+
+    """
+        echo -e 'filename\\tlibrary\\tunpaired_reads_examined\\tread_pairs_examined\\tsecondary_or_supplementary_rds\\tunmapped_reads\\tunpaired_read_duplicates\\tread_pair_duplicates\\tread_pair_optical_duplicates\\tpercent_duplication\\testimated_library_size' > ${date}.duplicates_summary.tsv
+        for i in ${duplicates_set.join(" ")}; do
+            f=\$(basename \${i})
+            cat \${i} | awk -v f=\${f/.duplicates.txt/} 'NR >= 8 && \$0 !~ "##.*" && \$0 != ""  { print f "\\t" \$0 } NR >= 8 && \$0 ~ "##.*" { exit }'  >> ${date}.duplicates_summary.tsv
+        done;
+    """
+}
 
 /*
     Coverage Bam
@@ -331,21 +374,7 @@ process merge_union_vcf {
         bcftools merge --threads 24 -O z -m all --file-list ${union_vcfs} > ${date}.merged.raw.vcf.gz
         bcftools index ${date}.merged.raw.vcf.gz
 
-        min_depth=${min_depth}
-        qual=${qual}
-        mq=${mq}
-        dv_dp=${dv_dp}
-
         bcftools view ${date}.merged.raw.vcf.gz | \\
-        bcftools filter -O u --threads 16 --set-GTs . --include "QUAL >= \${qual} || FORMAT/GT == '0/0'" |  \\
-        bcftools filter -O u --threads 16 --set-GTs . --include "FORMAT/DP > \${min_depth}" | \\
-        bcftools filter -O u --threads 16 --set-GTs . --include "INFO/MQ > \${mq}" | \\
-        bcftools filter -O u --threads 16 --set-GTs . --include "(FORMAT/AD[1])/(FORMAT/DP) >= \${dv_dp} || FORMAT/GT == '0/0'" | \\
-        #vk filter REF --min=1 - | \\
-        #vk filter ALT --min=1 - | \\
-        #vk filter ALT --max=0.99 - | \\
-        #vk filter MISSING --max=0.90 --soft-filter="high_missing" --mode=x - | \\
-        #vk filter HET --max=0.10 --soft-filter="high_heterozygosity" --mode=+ - | \\
         bcftools view -O z - > ${date}.merged.filtered.vcf.gz
         bcftools index -f ${date}.merged.filtered.vcf.gz
 
@@ -381,10 +410,10 @@ process stat_tsv {
         file("${date}.merged.filtered.vcf.gz") from filtered_vcf_stat
 
     output:
-        file("${date}.stats.txt")
+        file("${date}.filtered.stats.txt")
 
     """
-        bcftools stats ${date}.merged.filtered.vcf.gz > ${date}.stats.txt
+        bcftools stats ${date}.merged.filtered.vcf.gz > ${date}.filtered.stats.txt
     """
 
 }
