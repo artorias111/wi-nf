@@ -7,6 +7,14 @@ date = config.date
 genome = config.genome
 analysis_dir = config.analysis_dir
 
+/*
+    Filtering configuration
+*/
+min_depth=3
+qual=30
+mq=40
+dv_dp=0.5
+
 println "Running Concordance on Wild Isolates"
 println "Using Reference: ${genome}" 
 
@@ -443,7 +451,7 @@ process call_variants_union {
 
     """
         contigs="`samtools view -H ${SM}.bam | grep -Po 'SN:([^\\W]+)' | cut -c 4-40`"
-        echo \${contigs} | tr ' ' '\\n' | xargs --verbose -I {} -P ${cores} sh -c "samtools mpileup --redo-BAQ -r {} --BCF --output-tags DP,AD,ADF,ADR,INFO/AD,SP --fasta-ref ${reference} ${SM}.bam | bcftools call -T sitelist.tsv.gz --skip-variants indels --variants-only --multiallelic-caller -O z  -  > ${SM}.{}.union.vcf.gz"
+        echo \${contigs} | tr ' ' '\\n' | xargs --verbose -I {} -P ${cores} sh -c "samtools mpileup --redo-BAQ -r {} --BCF --output-tags DP,AD,ADF,ADR,INFO/AD,SP --fasta-ref ${reference} ${SM}.bam | bcftools call -T sitelist.tsv.gz --skip-variants indels --multiallelic-caller -O z  -  > ${SM}.{}.union.vcf.gz"
         order=`echo \${contigs} | tr ' ' '\\n' | awk '{ print "${SM}." \$1 ".union.vcf.gz" }'`
 
         # Output variant sites
@@ -483,13 +491,25 @@ process merge_union_vcf {
 
     output:
         file("${date}.merged.raw.vcf.gz") into raw_vcf
+        file("${date}.merged.raw.vcf.gz.csi") into raw_vcf_csi
         file("${date}.merged.filtered.vcf.gz") into filtered_vcf
+        file("${date}.merged.filtered.vcf.gz.csi") into filtered_vcf_csi
 
     """
         bcftools merge --threads 24 -O z -m all --file-list ${union_vcfs} > ${date}.merged.raw.vcf.gz
         bcftools index ${date}.merged.raw.vcf.gz
 
+        min_depth=${min_depth}
+        qual=${qual}
+        mq=${mq}
+        dv_dp=${dv_dp}
+
         bcftools view ${date}.merged.raw.vcf.gz | \\
+        vk geno het-polarization - | \\
+        bcftools filter -O u --threads 16 --set-GTs . --include "QUAL >= \${qual} || FORMAT/GT == '0/0'" |  \\
+        bcftools filter -O u --threads 16 --set-GTs . --include "FORMAT/DP > \${min_depth}" | \\
+        bcftools filter -O u --threads 16 --set-GTs . --include "INFO/MQ > \${mq}" | \\
+        bcftools filter -O u --threads 16 --set-GTs . --include "(FORMAT/AD[1])/(FORMAT/DP) >= \${dv_dp} || FORMAT/GT == '0/0'" | \\
         bcftools view -O z - > ${date}.merged.filtered.vcf.gz
         bcftools index -f ${date}.merged.filtered.vcf.gz
 
