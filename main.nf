@@ -63,8 +63,12 @@ process perform_alignment {
     output:
         set SM, file("${fq_pair_id}.bam"), file("${fq_pair_id}.bam.bai") into sample_aligned_bams
         val "${fq_pair_id}" into fq_pair_id_cov
+        val "${fq_pair_id}" into fq_pair_id_idxstats
+        val "${fq_pair_id}" into fq_pair_id_bamstats
         file "${fq_pair_id}.bam" into fq_cov_bam
         file "${fq_pair_id}.bam.bai" into fq_cov_bam_indices
+        set file("${fq_pair_id}.bam"), file("${fq_pair_id}.bam.bai") into fq_idx_stats_bam
+        set file("${fq_pair_id}.bam"), file("${fq_pair_id}.bam.bai") into fq_stats_bam
 
     
     """
@@ -98,7 +102,7 @@ process coverage_fq {
 
 process coverage_fq_merge {
 
-    publishDir analysis_dir, mode: 'copy'
+    publishDir analysis_dir + "/fq", mode: 'copy'
 
     input:
         val fq_set from fq_coverage.toSortedList()
@@ -115,6 +119,80 @@ process coverage_fq_merge {
     """
 }
 
+/*
+    fq idx stats
+*/
+
+process fq_idx_stats {
+    
+    input:
+        val fq_pair_id from fq_pair_id_idxstats
+        set file("${fq_pair_id}.bam"), file("${fq_pair_id}.bam.bai") from fq_idx_stats_bam
+    output:
+        file fq_idxstats into fq_idxstats_set
+
+    """
+        samtools idxstats ${fq_pair_id}.bam | awk '{ print "${fq_pair_id}\\t" \$0 }' > fq_idxstats
+    """
+}
+
+process fq_combine_idx_stats {
+
+    publishDir analysis_dir + "/fq", mode: 'copy'
+
+    input:
+        val bam_idxstats from fq_idxstats_set.toSortedList()
+
+    output:
+        file("${date}.fq_bam_idxstats.tsv")
+
+    """
+        echo -e "SM\\treference\\treference_length\\tmapped_reads\\tunmapped_reads" > ${date}.fq_bam_idxstats.tsv
+        cat ${bam_idxstats.join(" ")} >> ${date}.fq_bam_idxstats.tsv
+    """
+
+}
+
+/*
+    fq bam stats
+*/
+
+process fq_bam_stats {
+
+    tag { fq_pair_id }
+
+    input:
+        val fq_pair_id from fq_pair_id_bamstats
+        set file("${fq_pair_id}.bam"), file("${fq_pair_id}.bam.bai") from fq_stats_bam
+
+    output:
+        file 'bam_stat' into fq_bam_stat_files
+
+    """
+        cat <(samtools stats ${fq_pair_id}.bam | grep ^SN | cut -f 2- | awk '{ print "${fq_pair_id}\t" \$0 }' | sed 's/://g') > bam_stat
+    """
+}
+
+process combine_fq_bam_stats {
+
+    publishDir analysis_dir + "/fq", mode: 'copy'
+
+    input:
+        val stat_files from fq_bam_stat_files.toSortedList()
+
+    output:
+        file("${date}.fq_bam_stats.tsv")
+
+    """
+        echo -e "fq_pair_id\\tvariable\\tvalue\\tcomment" > ${date}.fq_bam_stats.tsv
+        cat ${stat_files.join(" ")} >> ${date}.fq_bam_stats.tsv
+    """
+}
+
+/* 
+  Merge - Generate SM Bam
+*/
+
 
 process merge_bam {
 
@@ -130,10 +208,12 @@ process merge_bam {
         val SM into merged_SM_individual
         val SM into merged_SM_union
         val SM into merged_SM_idxstats
+        val SM into merged_SM_bamstats
         set file("${SM}.bam"), file("${SM}.bam.bai") into merged_bams_for_coverage
         set file("${SM}.bam"), file("${SM}.bam.bai") into merged_bams_individual
         set file("${SM}.bam"), file("${SM}.bam.bai") into merged_bams_union
         set file("${SM}.bam"), file("${SM}.bam.bai") into bams_idxstats
+        set file("${SM}.bam"), file("${SM}.bam.bai") into bams_stats
         file("${SM}.duplicates.txt") into duplicates_file
         
     """
@@ -155,7 +235,7 @@ process merge_bam {
 
 
 
-process idx_stats {
+process SM_idx_stats {
     
     input:
         val SM from merged_SM_idxstats
@@ -168,22 +248,60 @@ process idx_stats {
     """
 }
 
-process combine_idx_stats {
+process SM_combine_idx_stats {
 
-    publishDir analysis_dir, mode: 'copy'
+    publishDir analysis_dir + "/SM", mode: 'copy'
 
     input:
         val bam_idxstats from bam_idxstats_set.toSortedList()
 
     output:
-        file("${date}.bam_idxstats.tsv")
+        file("${date}.SM_bam_idxstats.tsv")
 
     """
-        echo -e "SM\\treference\\treference_length\\tmapped_reads\\tunmapped_reads" > ${date}.bam_idxstats.tsv
-        cat ${bam_idxstats.join(" ")} >> ${date}.bam_idxstats.tsv
+        echo -e "SM\\treference\\treference_length\\tmapped_reads\\tunmapped_reads" > ${date}.SM_bam_idxstats.tsv
+        cat ${bam_idxstats.join(" ")} >> ${date}.SM_bam_idxstats.tsv
     """
 
 }
+
+
+/*
+    SM bam stats
+*/
+
+process SM_bam_stats {
+
+    tag { SM }
+
+    input:
+        val SM from merged_SM_bamstats
+        set file("${SM}.bam"), file("${SM}.bam.bai") from bams_stats
+
+    output:
+        file 'bam_stat' into SM_bam_stat_files
+
+    """
+        cat <(samtools stats ${SM}.bam | grep ^SN | cut -f 2- | awk '{ print "${SM}\t" \$0 }' | sed 's/://g') > bam_stat
+    """
+}
+
+process combine_SM_bam_stats {
+
+    publishDir analysis_dir + "/SM", mode: 'copy'
+
+    input:
+        val stat_files from SM_bam_stat_files.toSortedList()
+
+    output:
+        file("${date}.SM_bam_stats.tsv")
+
+    """
+        echo -e "fq_pair_id\\tvariable\\tvalue\\tcomment" > ${date}.SM_bam_stats.tsv
+        cat ${stat_files.join(" ")} >> ${date}.SM_bam_stats.tsv
+    """
+}
+
 
 
 process format_duplicates {
@@ -194,14 +312,14 @@ process format_duplicates {
         val duplicates_set from duplicates_file.toSortedList()
 
     output:
-        file("${date}.duplicates_summary.tsv")
+        file("${date}.bam_duplicates.tsv")
 
 
     """
-        echo -e 'filename\\tlibrary\\tunpaired_reads_examined\\tread_pairs_examined\\tsecondary_or_supplementary_rds\\tunmapped_reads\\tunpaired_read_duplicates\\tread_pair_duplicates\\tread_pair_optical_duplicates\\tpercent_duplication\\testimated_library_size' > ${date}.duplicates_summary.tsv
+        echo -e 'filename\\tlibrary\\tunpaired_reads_examined\\tread_pairs_examined\\tsecondary_or_supplementary_rds\\tunmapped_reads\\tunpaired_read_duplicates\\tread_pair_duplicates\\tread_pair_optical_duplicates\\tpercent_duplication\\testimated_library_size' > ${date}.bam_duplicates.tsv
         for i in ${duplicates_set.join(" ")}; do
             f=\$(basename \${i})
-            cat \${i} | awk -v f=\${f/.duplicates.txt/} 'NR >= 8 && \$0 !~ "##.*" && \$0 != ""  { print f "\\t" \$0 } NR >= 8 && \$0 ~ "##.*" { exit }'  >> ${date}.duplicates_summary.tsv
+            cat \${i} | awk -v f=\${f/.duplicates.txt/} 'NR >= 8 && \$0 !~ "##.*" && \$0 != ""  { print f "\\t" \$0 } NR >= 8 && \$0 ~ "##.*" { exit }'  >> ${date}.bam_duplicates.tsv
         done;
     """
 }
@@ -230,7 +348,7 @@ process coverage_SM {
 
 process coverage_SM_merge {
 
-    publishDir analysis_dir, mode: 'copy'
+    publishDir analysis_dir + "/SM", mode: 'copy'
 
 
     input:
