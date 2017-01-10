@@ -104,7 +104,7 @@ process coverage_fq_merge {
         file("${date}.fq_coverage.tsv")
 
     """
-        echo -e 'bam\\tcontig\\tstart\\tend\\tproperty\\tvalue' > ${date}.fq_coverage.tsv
+        echo -e 'fq\\tcontig\\tstart\\tend\\tproperty\\tvalue' > ${date}.fq_coverage.full.tsv
         cat ${fq_set.join(" ")} >> ${date}.fq_coverage.full.tsv
 
         cat <(echo -e 'fq\\tcoverage') <( cat ${date}.fq_coverage.full.tsv | grep 'genome' | grep 'depth_of_coverage' | cut -f 1,6) > ${date}.fq_coverage.tsv
@@ -298,7 +298,7 @@ process combine_SM_bam_stats {
 
 process format_duplicates {
 
-    publishDir analysis_dir, mode: 'copy'
+    publishDir analysis_dir + "/duplicates", mode: 'copy'
 
     input:
         val duplicates_set from duplicates_file.toSortedList()
@@ -351,7 +351,7 @@ process coverage_SM_merge {
         file("${date}.SM_coverage.tsv")
 
     """
-        echo -e 'bam\\tcontig\\tstart\\tend\\tproperty\\tvalue' > ${date}.SM_coverage.tsv
+        echo -e 'bam\\tcontig\\tstart\\tend\\tproperty\\tvalue' > ${date}.SM_coverage.full.tsv
         cat ${sm_set.join(" ")} >> ${date}.SM_coverage.full.tsv
 
         # Generate condensed version
@@ -399,7 +399,7 @@ process call_variants_individual {
 
 process merge_variant_list {
 
-    publishDir analysis_dir, mode: 'copy'
+    publishDir analysis_dir + "/sitelist", mode: 'copy'
     
     input:
         val sites from individual_sites.toSortedList()
@@ -457,10 +457,9 @@ process call_variants_union {
 
 process generate_union_vcf_list {
 
-
     cpus 1 
 
-    publishDir analysis_dir, mode: 'copy'
+    publishDir analysis_dir + "/vcf", mode: 'copy'
 
     input:
        val vcf_set from union_vcf_set.toSortedList()
@@ -476,9 +475,7 @@ process generate_union_vcf_list {
 
 process merge_union_vcf {
 
-    cpus cores
-
-    publishDir analysis_dir, mode: 'copy'
+    publishDir analysis_dir + "/vcf", mode: 'copy'
 
     input:
         val SM from union_vcf_SM.toSortedList()
@@ -497,14 +494,13 @@ process merge_union_vcf {
         bcftools index -f ${date}.merged.filtered.vcf.gz
 
     """
-
 }
 
 filtered_vcf.into { filtered_vcf_gtcheck; filtered_vcf_stat }
 
 process gtcheck_tsv {
 
-    publishDir analysis_dir, mode: 'copy'
+    publishDir analysis_dir + "/concordance", mode: 'copy'
 
     input:
         file("${date}.merged.filtered.vcf.gz") from filtered_vcf_gtcheck
@@ -522,7 +518,7 @@ process gtcheck_tsv {
 
 process stat_tsv {
 
-    publishDir analysis_dir, mode: 'copy'
+    publishDir analysis_dir + "/vcf", mode: 'copy'
 
     input:
         file("${date}.merged.filtered.vcf.gz") from filtered_vcf_stat
@@ -531,13 +527,30 @@ process stat_tsv {
         file("${date}.filtered.stats.txt")
 
     """
-        bcftools stats ${date}.merged.filtered.vcf.gz > ${date}.filtered.stats.txt
+        bcftools stats --verbose ${date}.merged.filtered.vcf.gz > ${date}.filtered.stats.txt
     """
 
 }
 
 
 workflow.onComplete {
-    println "Pipeline completed at: $workflow.complete"
-    println "Execution status: ${ workflow.success ? 'OK' : 'failed' }"
+    def subject = 'Concordance Workflow'
+    def recipient = config.email
+
+    ['mail', '-s', subject, recipient].execute() << """
+
+    RIL Pipeline complete
+    ---------------------------
+    Completed at: ${workflow.complete}
+    Duration    : ${workflow.duration}
+    Success     : ${workflow.success}
+    workDir     : ${workflow.workDir}
+    exit status : ${workflow.exitStatus}
+    Error report: ${workflow.errorReport ?: '-'}
+    profile: ${workflow.profile}
+    Analysis Directory: ${analysis_dir}
+    Nextflow Version: ${nextflow.version}
+    Nextflow Build: ${nextflow.build}
+    Nextflow Timestamp: ${nextflow.timestamp}
+    """
 }
