@@ -354,7 +354,7 @@ process coverage_SM_merge {
 
     output:
         file("SM_coverage.full.tsv")
-        file("SM_coverage.tsv")
+        file("SM_coverage.tsv") into SM_coverage_merged
 
     """
         echo -e 'bam\\tcontig\\tstart\\tend\\tproperty\\tvalue' > SM_coverage.full.tsv
@@ -368,8 +368,6 @@ process coverage_SM_merge {
 
 
 process call_variants_individual {
-
-    cpus 6
 
     tag { SM }
 
@@ -432,8 +430,6 @@ union_vcf_channel = merged_bams_union.spread(gz_sitelist)
 
 
 process call_variants_union {
-
-    cpus 6
 
     tag { SM }
 
@@ -553,7 +549,7 @@ process stat_tsv {
         set file("merged.filtered.vcf.gz"), file("merged.filtered.vcf.gz.csi") from filtered_vcf_stat
 
     output:
-        file("filtered.stats.txt")
+        file("filtered.stats.txt") into filtered_stats
 
     """
         bcftools stats --verbose merged.filtered.vcf.gz > filtered.stats.txt
@@ -561,21 +557,33 @@ process stat_tsv {
 
 }
 
+/*
+    Perform concordance analysis
+*/
 
-workflow.onComplete {
-    def subject = 'Concordance Workflow'
-    def recipient = ${config.email}
+concordance_script = Channel.fromPath("process_concordance.R")
 
-    ['mail', '-s', subject, recipient].execute() << """
+process process_concordance_results {
 
-    RIL Pipeline complete
-    ---------------------------
-    Completed at: ${workflow.complete}
-    Duration    : ${workflow.duration}
-    Success     : ${workflow.success}
-    exit status : ${workflow.exitStatus}
-    Error report: ${workflow.errorReport ?: '-'}
-    profile: ${workflow.profile}
-    Analysis Directory: ${analysis_dir}
+
+    publishDir analysis_dir + "/concordance", mode: "copy"
+
+    input:
+        file "gtcheck.tsv" from gtcheck
+        file "filtered.stats.txt" from filtered_stats
+        file "SM_coverage.tsv" from SM_coverage_merged
+        file 'process_concordance.R' from concordance_script
+
+    output:
+        file("concordance.svg")
+        file("concordance.png")
+        file("xconcordance.svg")
+        file("xconcordance.png")
+        file("isotype_groups.tsv")
+
     """
+    Rscript --vanilla process_concordance.R
+    """
+
 }
+
