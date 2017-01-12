@@ -1,6 +1,5 @@
 #!/usr/bin/env Rscript --vanilla
 library(tidyverse)
-
 # Used in calculating isotypes
 stack_list <- function(x) {
   if (is.null(names(x)) == T) {
