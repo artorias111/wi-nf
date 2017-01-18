@@ -5,6 +5,10 @@ cores = config.cores
 genome = config.genome
 analysis_dir = config.analysis_dir
 
+// Define contigs here!
+contig_list = ["I", "II", "III", "IV", "V", "X", "MtDNA"]
+contigs = Channel.from(contig_list)
+
 /*
     Filtering configuration
 */
@@ -474,21 +478,48 @@ process generate_union_vcf_list {
     """
 }
 
+union_vcfs_in = union_vcfs.spread(contigs)
 
-process merge_union_vcf {
+process merge_union_vcf_chromosome {
 
-    publishDir analysis_dir + "/vcf", mode: 'copy'
+    tag { chrom }
 
     input:
-        val SM from union_vcf_SM.toSortedList()
-        file(union_vcfs:"union_vcfs.txt") from union_vcfs
+        set file(union_vcfs:"union_vcfs.txt"), val(chrom) from union_vcfs_in
 
     output:
-        file("merged.raw.vcf.gz") into raw_vcf
-        file("merged.raw.vcf.gz.csi") into raw_vcf_csi
+        val(chrom) into contigs_list_in
+        file("${chrom}.merged.raw.vcf.gz") into raw_vcf
 
     """
-        bcftools merge --threads 10 -O z -m all --file-list ${union_vcfs} > merged.raw.vcf.gz
+        bcftools merge --threads 10 --regions ${chrom} -O z -m all --file-list ${union_vcfs} > ${chrom}.merged.raw.vcf.gz
+        bcftools index ${chrom}.merged.raw.vcf.gz
+    """
+}
+
+
+// Generate a list of ordered files.
+contig_raw_vcf = contig_list*.concat(".merged.raw.vcf.gz")
+
+process concatenate_union_vcf {
+
+    echo true
+
+    //publishDir analysis_dir + "/vcf", mode: 'copy'
+
+    input:
+        //val chrom from contigs_list_in
+        val merge_vcf from raw_vcf.toList()
+
+    output:
+        set file("merged.raw.vcf.gz"), file("merged.raw.vcf.gz.csi") into raw_vcf_concatenated
+
+    """
+        for i in ${merge_vcf.join(" ")}; do
+            ln  -s \${i} `basename \${i}`;
+        done;
+        chrom_set="";
+        bcftools concat -O z ${contig_raw_vcf.join(" ")}  > merged.raw.vcf.gz
         bcftools index merged.raw.vcf.gz
     """
 }
@@ -498,8 +529,7 @@ process filter_union_vcf {
     publishDir analysis_dir + "/vcf", mode: 'copy'
 
     input:
-        file("merged.raw.vcf.gz") from raw_vcf
-        file("merged.raw.vcf.gz.csi") from raw_vcf_csi       
+        set file("merged.raw.vcf.gz"), file("merged.raw.vcf.gz.csi") from raw_vcf_concatenated
 
     output:
         set file("merged.filtered.vcf.gz"), file("merged.filtered.vcf.gz.csi") into filtered_vcf
