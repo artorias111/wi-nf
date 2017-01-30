@@ -359,6 +359,7 @@ process coverage_SM_merge {
     output:
         file("SM_coverage.full.tsv")
         file("SM_coverage.tsv") into SM_coverage_merged
+        file("SM_coverage.tsv") into SM_coverage_network
 
     """
         echo -e 'bam\\tcontig\\tstart\\tend\\tproperty\\tvalue' > SM_coverage.full.tsv
@@ -610,9 +611,33 @@ process process_concordance_results {
         file("xconcordance.svg")
         file("xconcordance.png")
         file("isotype_groups.tsv")
+        file("gtcheck.tsv") into gtcheck_network
 
     """
     Rscript --vanilla process_concordance.R
+    """
+
+}
+
+/*
+    Network analysis
+*/
+
+process examine_concordance_network {
+
+    publishDir analysis_dir + "/concordance", mode: "copy"
+
+    input:
+        file("graph.py") from Channel.fromPath("graph.py")
+        file("SM_coverage.tsv") from SM_coverage_network
+        file("gtcheck.tsv") from gtcheck_network
+        file("sitelist.tsv") from sitelist
+
+    output:
+        file("problem_SM.tsv")
+
+    """
+    python graph.py
     """
 
 }

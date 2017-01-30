@@ -8,7 +8,7 @@ stack_list <- function(x) {
   stack(x)
 }
 
-coverage_20 <- (readr::read_tsv("../SM/SM_coverage.tsv") %>%
+coverage_20 <- (readr::read_tsv("SM_coverage.tsv") %>%
                   dplyr::filter(coverage > 20))$strain
 
 
@@ -19,7 +19,7 @@ WI_strain_info <- readr::read_tsv("https://docs.google.com/spreadsheets/d/1V6YHz
 
 # Get number of Sites in VCF
 
-nsites = system("cat ../vcf/filtered.stats.txt  | grep 'SN.*number of SNPs' | cut -f 4", intern = T)
+nsites = system("cat filtered.stats.txt  | grep 'SN.*number of SNPs' | cut -f 4", intern = T)
 nsites = as.numeric(nsites)
 
 
@@ -67,10 +67,8 @@ isotype_groups <- stack_list(unique(lapply(strain_list, function(x) {
   dplyr::distinct(data, .keep_all = T) %>%
   tidyr::unnest()
 
-SM_coverage <- readr::read_tsv("SM_coverage.tsv")
-
 isotype_groups <- dplyr::left_join(isotype_groups, WI_strain_info) %>%
-  dplyr::left_join(SM_coverage) %>%
+  dplyr::left_join(readr::read_tsv("SM_coverage.tsv")) %>%
   dplyr::mutate(group = as.integer(group)) %>%
   dplyr::group_by(group) %>%
   dplyr::mutate(unique_isotypes_per_group = length(unique(purrr::discard(isotype, is.na )))) %>%
