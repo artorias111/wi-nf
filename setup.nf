@@ -35,7 +35,7 @@ process generate_sets {
 
     output:
     file 'strain_set.json' into strain_json
-    file 'isotype_set.json' into isotype_json
+    //file 'isotype_set.json' into isotype_json
 
     '''
     #!/usr/bin/env Rscript --vanilla

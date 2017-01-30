@@ -8,20 +8,26 @@ stack_list <- function(x) {
   stack(x)
 }
 
+coverage_20 <- (readr::read_tsv("../SM/SM_coverage.tsv") %>%
+                  dplyr::filter(coverage > 20))$strain
+
+
 WI_strain_info <- readr::read_tsv("https://docs.google.com/spreadsheets/d/1V6YHzblaDph01sFDI8YK_fP0H7sVebHQTXypGdiQIjI/pub?output=tsv") %>%
   dplyr::select(strain, isotype) %>%
-  dplyr::filter(!is.na(isotype))
+  dplyr::filter(!is.na(isotype)) %>%
+  dplyr::filter(strain %in% coverage_20)
 
 # Get number of Sites in VCF
 
-nsites = system("cat filtered.stats.txt  | grep 'SN.*number of SNPs' | cut -f 4", intern = T)
+nsites = system("cat ../vcf/filtered.stats.txt  | grep 'SN.*number of SNPs' | cut -f 4", intern = T)
 nsites = as.numeric(nsites)
 
 
 gtcheck <- readr::read_tsv("gtcheck.tsv") %>%
+  dplyr::filter((i %in% coverage_20) & (j %in% coverage_20)) %>%
   dplyr::mutate(concordance = (nsites - discordance) / nsites) %>%
-  dplyr::mutate(isotype = concordance > 0.9993)
-
+  dplyr::mutate(isotype = concordance > 0.9993) 
+  
 #
 # Handle single strains
 #
