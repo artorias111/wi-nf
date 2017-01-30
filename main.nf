@@ -509,7 +509,7 @@ process concatenate_union_vcf {
 
     input:
         //val chrom from contigs_list_in
-        val merge_vcf from raw_vcf.toList()
+        val merge_vcf from raw_vcf.toSortedList()
 
     output:
         set file("merged.raw.vcf.gz"), file("merged.raw.vcf.gz.csi") into raw_vcf_concatenated
