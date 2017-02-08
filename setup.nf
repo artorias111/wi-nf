@@ -28,6 +28,8 @@ process generate_sets {
 
     module 'R/3.3.1'
 
+    executor 'local'
+
     publishDir "/projects/b1059/workflows/concordance-nf", mode: "copy"
 
     input:
