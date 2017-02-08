@@ -552,25 +552,47 @@ process filter_union_vcf {
     """
 }
 
-filtered_vcf.into { filtered_vcf_gtcheck; filtered_vcf_stat }
+filtered_vcf.into { filtered_vcf_gtcheck; filtered_vcf_stat; gtcheck_no_all_ref; filtered_vcf_phylo }
 
-process gtcheck_tsv {
+process gen_gtcheck_vcf {
 
-    publishDir analysis_dir + "/concordance", mode: 'copy'
+    publishDir analysis_dir + "/vcf", mode: 'copy'
 
     input:
         set file("merged.filtered.vcf.gz"), file("merged.filtered.vcf.gz.csi") from filtered_vcf_gtcheck
 
     output:
-        file("gtcheck.tsv") into gtcheck
+        set file("merged.filtered.snp.vcf.gz"), file("merged.filtered.snp.vcf.gz.csi") into filtered_snp_vcf
+        file("merged.filtered.snp.vcf.gz.csi")
 
     """
-        echo -e "discordance\\tsites\\tavg_min_depth\\ti\\tj" > gtcheck.tsv
-        bcftools gtcheck -H -G 1 merged.filtered.vcf.gz | egrep '^CN' | cut -f 2-6 >> gtcheck.tsv
+        bcftools view -O v merged.filtered.vcf.gz | \\
+        vk filter REF --min=1 - | \\
+        vk filter ALT --min=1 - | \\
+        bcftools view -O z  > merged.filtered.snp.vcf.gz
+        bcftools index merged.filtered.snp.vcf.gz
     """
 
 }
 
+process calculate_gtcheck {
+
+    publishDir analysis_dir + "/concordance", mode: 'copy'
+
+    input:
+        set file("merged.filtered.snp.vcf.gz"), file("merged.filtered.snp.vcf.gz.csi") from filtered_snp_vcf
+
+    output:
+        file("filtered.stats.snp.txt")
+        file("gtcheck.tsv") into gtcheck
+
+    """
+        echo -e "discordance\\tsites\\tavg_min_depth\\ti\\tj" > gtcheck.tsv
+        bcftools gtcheck -H -G 1 merged.filtered.snp.vcf.gz | egrep '^CN' | cut -f 2-6 >> gtcheck.tsv
+        bcftools stats --verbose merged.filtered.snp.vcf.gz > filtered.stats.snp.txt
+    """
+
+}
 
 process stat_tsv {
 
@@ -580,10 +602,10 @@ process stat_tsv {
         set file("merged.filtered.vcf.gz"), file("merged.filtered.vcf.gz.csi") from filtered_vcf_stat
 
     output:
-        file("filtered.stats.txt") into filtered_stats
+        file("merged.filtered.stats") into filtered_stats
 
     """
-        bcftools stats --verbose merged.filtered.vcf.gz > filtered.stats.txt
+        bcftools stats --verbose merged.filtered.vcf.gz > merged.filtered.stats
     """
 
 }
@@ -637,8 +659,57 @@ process examine_concordance_network {
         file("problem_SM.tsv")
 
     """
+    echo "None!" > problem_SM.tsv
     python graph.py
     """
 
 }
 
+filtered_vcf_phylo_contig = filtered_vcf_phylo.spread(["I", "II", "III", "IV", "V", "X", "MtDNA", "genome"])
+
+/*
+    Phylo analysis
+*/
+
+process phylo_analysis {
+
+    publishDir analysis_dir + "/phylo", mode: "copy"
+
+    tag { contig }
+
+    input:
+        set file("merged.filtered.vcf.gz"), file("merged.filtered.vcf.gz.csi"), val(contig) from filtered_vcf_phylo_contig
+
+    output:
+        set val(contig), file("${contig}.tree") into trees
+
+    """
+        if [ "${contig}" == "genome" ]
+        then
+            vk phylo tree nj merged.filtered.vcf.gz > genome.tree
+        else
+            vk phylo tree nj merged.filtered.vcf.gz ${contig} > ${contig}.tree
+        fi
+    """
+}
+
+trees_phylo = trees.spread(Channel.fromPath("process_trees.R"))
+
+process plot_trees {
+
+    publishDir analysis_dir + "/phylo", mode: "copy"
+
+    tag { contig }
+
+    input:
+        set val(contig), file("${contig}.tree"), file("process_trees.R") from trees_phylo
+
+    output:
+        file("${contig}.svg")
+        file("${contig}.png")
+
+    """
+    Rscript --vanilla process_trees.R ${contig}
+    """
+
+}

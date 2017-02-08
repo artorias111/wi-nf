@@ -1235,31 +1235,6 @@
       "/projects/b1059/data/fastq/WI/dna/processed/original_wi_set/BGI3-RET1b-ED3049-trim-2P.fq.gz",
       "BGI3-RET1b-ED3049-trim-"
     ],
-    "@RG\tID:original_wi_seq____MMP-ML_2-ED3049-trim-\tLB:ML_2\tSM:ED3049": [
-      "/projects/b1059/data/fastq/WI/dna/processed/original_wi_set/MMP-ML_2-ED3049-trim-1P.fq.gz",
-      "/projects/b1059/data/fastq/WI/dna/processed/original_wi_set/MMP-ML_2-ED3049-trim-2P.fq.gz",
-      "MMP-ML_2-ED3049-trim-"
-    ],
-    "@RG\tID:original_wi_seq____MMP-ML_3-ED3049-trim-\tLB:ML_3\tSM:ED3049": [
-      "/projects/b1059/data/fastq/WI/dna/processed/original_wi_set/MMP-ML_3-ED3049-trim-1P.fq.gz",
-      "/projects/b1059/data/fastq/WI/dna/processed/original_wi_set/MMP-ML_3-ED3049-trim-2P.fq.gz",
-      "MMP-ML_3-ED3049-trim-"
-    ],
-    "@RG\tID:original_wi_seq____MMP-ML_5-ED3049-trim-\tLB:ML_5\tSM:ED3049": [
-      "/projects/b1059/data/fastq/WI/dna/processed/original_wi_set/MMP-ML_5-ED3049-trim-1P.fq.gz",
-      "/projects/b1059/data/fastq/WI/dna/processed/original_wi_set/MMP-ML_5-ED3049-trim-2P.fq.gz",
-      "MMP-ML_5-ED3049-trim-"
-    ],
-    "@RG\tID:original_wi_seq____MMP-ML_6-ED3049-trim-\tLB:ML_6\tSM:ED3049": [
-      "/projects/b1059/data/fastq/WI/dna/processed/original_wi_set/MMP-ML_6-ED3049-trim-1P.fq.gz",
-      "/projects/b1059/data/fastq/WI/dna/processed/original_wi_set/MMP-ML_6-ED3049-trim-2P.fq.gz",
-      "MMP-ML_6-ED3049-trim-"
-    ],
-    "@RG\tID:original_wi_seq____MMP-ML_7-ED3049-trim-\tLB:ML_7\tSM:ED3049": [
-      "/projects/b1059/data/fastq/WI/dna/processed/original_wi_set/MMP-ML_7-ED3049-trim-1P.fq.gz",
-      "/projects/b1059/data/fastq/WI/dna/processed/original_wi_set/MMP-ML_7-ED3049-trim-2P.fq.gz",
-      "MMP-ML_7-ED3049-trim-"
-    ],
     "@RG\tID:original_wi_seq____Princeton1-PL_15-ED3049-trim-\tLB:PL_15\tSM:ED3049": [
       "/projects/b1059/data/fastq/WI/dna/processed/original_wi_set/Princeton1-PL_15-ED3049-trim-1P.fq.gz",
       "/projects/b1059/data/fastq/WI/dna/processed/original_wi_set/Princeton1-PL_15-ED3049-trim-2P.fq.gz",
