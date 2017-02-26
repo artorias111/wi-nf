@@ -1,9 +1,11 @@
 #!/usr/bin/env nextflow
 tmpdir = config.tmpdir
 reference = config.reference
-cores = config.cores
+alignment_cores = config.alignment_cores
+variant_cores = config.variant_cores
 genome = config.genome
 analysis_dir = config.analysis_dir
+SM_alignments_dir = config.SM_alignments_dir
 
 // Define contigs here!
 contig_list = ["I", "II", "III", "IV", "V", "X", "MtDNA"]
@@ -23,12 +25,15 @@ println "Using Reference: ${genome}"
 // Construct strain and isotype lists
 import groovy.json.JsonSlurper
 
-def strain_set = []
-def isotype_set = []
+if (test == 'true') {
+    strain_json = "isotype_set_test.json"
+} else {
+    strain_json = "isotype_set.json"
+}
 
-// Strain
-def strainFile = new File('strain_set.json')
+def strainFile = new File(strain_json)
 def strainJSON = new JsonSlurper().parseText(strainFile.text)
+strain_set_file = Channel.fromPath(strain_json)
 
 strainJSON.each { SM, RG ->
     RG.each { k, v ->
@@ -36,7 +41,6 @@ strainJSON.each { SM, RG ->
     }
 }
 
-strain_set_file = Channel.fromPath('strain_set.json')
 
 process setup_dirs {
 
@@ -47,30 +51,23 @@ process setup_dirs {
 
     """
         mkdir -p ${analysis_dir}
-        cp ${strain_set_file} ${analysis_dir}/strain_set.json
+        cp ${strain_set_file} ${analysis_dir}/isotype_set.json
     """
 }
 
 /*
-    Fastq concordance
+    Alignment
 */
 process perform_alignment {
 
-    cpus 4
+    cpus alignment_cores
 
     tag { fq_pair_id }
 
     input:
         set SM, RG, fq1, fq2, fq_pair_id from strain_set
     output:
-        set SM, file("${fq_pair_id}.bam"), file("${fq_pair_id}.bam.bai") into sample_aligned_bams
-        val "${fq_pair_id}" into fq_pair_id_cov
-        val "${fq_pair_id}" into fq_pair_id_idxstats
-        val "${fq_pair_id}" into fq_pair_id_bamstats
-        file "${fq_pair_id}.bam" into fq_cov_bam
-        file "${fq_pair_id}.bam.bai" into fq_cov_bam_indices
-        set file("${fq_pair_id}.bam"), file("${fq_pair_id}.bam.bai") into fq_idx_stats_bam
-        set file("${fq_pair_id}.bam"), file("${fq_pair_id}.bam.bai") into fq_stats_bam
+        set val(fq_pair_id), file("${fq_pair_id}.bam"), file("${fq_pair_id}.bam.bai") into fq_bam_set
 
     
     """
@@ -81,115 +78,6 @@ process perform_alignment {
     """
 }
 
-/*
-    Fastq coverage
-*/
-process coverage_fq {
-
-    tag { fq_pair_id }
-
-    input:
-        val fq_pair_id from fq_pair_id_cov
-        file("${fq_pair_id}.bam") from fq_cov_bam
-        file("${fq_pair_id}.bam.bai") from fq_cov_bam_indices
-    output:
-        file("${fq_pair_id}.coverage.tsv") into fq_coverage
-
-
-    """
-        bam coverage ${fq_pair_id}.bam > ${fq_pair_id}.coverage.tsv
-    """
-}
-
-
-process coverage_fq_merge {
-
-    publishDir analysis_dir + "/fq", mode: 'copy'
-
-    input:
-        val fq_set from fq_coverage.toSortedList()
-
-    output:
-        file("fq_coverage.full.tsv")
-        file("fq_coverage.tsv")
-
-    """
-        echo -e 'fq\\tcontig\\tstart\\tend\\tproperty\\tvalue' > fq_coverage.full.tsv
-        cat ${fq_set.join(" ")} >> fq_coverage.full.tsv
-
-        cat <(echo -e 'fq\\tcoverage') <( cat fq_coverage.full.tsv | grep 'genome' | grep 'depth_of_coverage' | cut -f 1,6) > fq_coverage.tsv
-    """
-}
-
-/*
-    fq idx stats
-*/
-
-process fq_idx_stats {
-    
-    input:
-        val fq_pair_id from fq_pair_id_idxstats
-        set file("${fq_pair_id}.bam"), file("${fq_pair_id}.bam.bai") from fq_idx_stats_bam
-    output:
-        file fq_idxstats into fq_idxstats_set
-
-    """
-        samtools idxstats ${fq_pair_id}.bam | awk '{ print "${fq_pair_id}\\t" \$0 }' > fq_idxstats
-    """
-}
-
-process fq_combine_idx_stats {
-
-    publishDir analysis_dir + "/fq", mode: 'copy'
-
-    input:
-        val bam_idxstats from fq_idxstats_set.toSortedList()
-
-    output:
-        file("fq_bam_idxstats.tsv")
-
-    """
-        echo -e "SM\\treference\\treference_length\\tmapped_reads\\tunmapped_reads" > fq_bam_idxstats.tsv
-        cat ${bam_idxstats.join(" ")} >> fq_bam_idxstats.tsv
-    """
-
-}
-
-/*
-    fq bam stats
-*/
-
-process fq_bam_stats {
-
-    tag { fq_pair_id }
-
-    input:
-        val fq_pair_id from fq_pair_id_bamstats
-        set file("${fq_pair_id}.bam"), file("${fq_pair_id}.bam.bai") from fq_stats_bam
-
-    output:
-        file 'bam_stat' into fq_bam_stat_files
-
-    """
-        cat <(samtools stats ${fq_pair_id}.bam | grep ^SN | cut -f 2- | awk '{ print "${fq_pair_id}\t" \$0 }' | sed 's/://g') > bam_stat
-    """
-}
-
-process combine_fq_bam_stats {
-
-    publishDir analysis_dir + "/fq", mode: 'copy'
-
-    input:
-        val stat_files from fq_bam_stat_files.toSortedList()
-
-    output:
-        file("fq_bam_stats.tsv")
-
-    """
-        echo -e "fq_pair_id\\tvariable\\tvalue\\tcomment" > fq_bam_stats.tsv
-        cat ${stat_files.join(" ")} >> fq_bam_stats.tsv
-    """
-}
 
 /* 
   Merge - Generate SM Bam
@@ -198,24 +86,17 @@ process combine_fq_bam_stats {
 
 process merge_bam {
 
-    cpus cores
+    cpus alignment_cores
+
+    publishDir SM_alignments_dir + "/WI/isotype", mode: 'copy', pattern: '*.bam*'
 
     tag { SM }
 
     input:
-        set SM, bam, index from sample_aligned_bams.groupTuple()
+        set SM, bam, index from fq_bam_set.groupTuple()
 
     output:
-        val SM into merged_SM_coverage
-        val SM into merged_SM_individual
-        val SM into merged_SM_union
-        val SM into merged_SM_idxstats
-        val SM into merged_SM_bamstats
-        set file("${SM}.bam"), file("${SM}.bam.bai") into merged_bams_for_coverage
-        set file("${SM}.bam"), file("${SM}.bam.bai") into merged_bams_individual
-        set file("${SM}.bam"), file("${SM}.bam.bai") into merged_bams_union
-        set file("${SM}.bam"), file("${SM}.bam.bai") into bams_idxstats
-        set file("${SM}.bam"), file("${SM}.bam.bai") into bams_stats
+        set val(SM), file("${SM}.bam"), file("${SM}.bam.bai") into SM_bam_set 
         file("${SM}.duplicates.txt") into duplicates_file
         
     """
@@ -235,13 +116,12 @@ process merge_bam {
     """
 }
 
-
+SM_bam_set.into { bam_idxstats; bams_stats; merged_bams_for_coverage; bam_call_variants_individual; bam_coverage }
 
 process SM_idx_stats {
     
     input:
-        val SM from merged_SM_idxstats
-        set file("${SM}.bam"), file("${SM}.bam.bai") from bams_idxstats
+        set val(SM), file("${SM}.bam"), file("${SM}.bam.bai") from bam_idxstats
     output:
         file bam_idxstats into bam_idxstats_set
 
@@ -277,8 +157,7 @@ process SM_bam_stats {
     tag { SM }
 
     input:
-        val SM from merged_SM_bamstats
-        set file("${SM}.bam"), file("${SM}.bam.bai") from bams_stats
+        set val(SM), file("${SM}.bam"), file("${SM}.bam.bai") from bam_stats
 
     output:
         file 'bam_stat' into SM_bam_stat_files
@@ -334,8 +213,7 @@ process coverage_SM {
     tag { SM }
 
     input:
-        val SM from merged_SM_coverage
-        set file("${SM}.bam"), file("${SM}.bam.bai") from merged_bams_for_coverage
+        set val(SM), file("${SM}.bam"), file("${SM}.bam.bai") from bam_coverage
 
     output:
         val SM into SM_coverage_sample
@@ -359,7 +237,6 @@ process coverage_SM_merge {
     output:
         file("SM_coverage.full.tsv")
         file("SM_coverage.tsv") into SM_coverage_merged
-        file("SM_coverage.tsv") into SM_coverage_network
 
     """
         echo -e 'bam\\tcontig\\tstart\\tend\\tproperty\\tvalue' > SM_coverage.full.tsv
@@ -377,8 +254,7 @@ process call_variants_individual {
     tag { SM }
 
     input:
-        val SM from merged_SM_individual
-        set file("${SM}.bam"), file("${SM}.bam.bai") from merged_bams_individual
+        set val(SM), file("${SM}.bam"), file("${SM}.bam.bai") from bam_call_variants_individual
 
     output:
         file("${SM}.individual.sites.tsv") into individual_sites
@@ -415,12 +291,15 @@ process merge_variant_list {
 
     output:
         set file("sitelist.tsv.gz"), file("sitelist.tsv.gz.tbi") into gz_sitelist
+        set file("sitelist.tsv.gz"), file("sitelist.tsv.gz.tbi") into fq_gz_sitelist
         file("sitelist.tsv") into sitelist
+        file("sitelist.count.txt")
 
 
     """
         echo ${sites}
         cat ${sites.join(" ")} | sort -k1,1 -k2,2n | uniq > sitelist.tsv
+        cat sitelist.tsv | wc -l > sitelist.count.txt
         bgzip sitelist.tsv -c > sitelist.tsv.gz && tabix -s1 -b2 -e2 sitelist.tsv.gz
     """
 }
@@ -431,8 +310,6 @@ process merge_variant_list {
 
 
 union_vcf_channel = merged_bams_union.spread(gz_sitelist)
-
-
 
 process call_variants_union {
 
@@ -483,6 +360,8 @@ union_vcfs_in = union_vcfs.spread(contigs)
 
 process merge_union_vcf_chromosome {
 
+    cpus variant_cores
+
     tag { chrom }
 
     input:
@@ -493,7 +372,7 @@ process merge_union_vcf_chromosome {
         file("${chrom}.merged.raw.vcf.gz") into raw_vcf
 
     """
-        bcftools merge --threads 10 --regions ${chrom} -O z -m all --file-list ${union_vcfs} > ${chrom}.merged.raw.vcf.gz
+        bcftools merge --threads ${variant_cores} --regions ${chrom} -O z -m all --file-list ${union_vcfs} > ${chrom}.merged.raw.vcf.gz
         bcftools index ${chrom}.merged.raw.vcf.gz
     """
 }
