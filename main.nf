@@ -6,6 +6,7 @@ variant_cores = config.variant_cores
 genome = config.genome
 analysis_dir = config.analysis_dir
 SM_alignments_dir = config.SM_alignments_dir
+beagle_location = config.beagle_location
 
 // Define contigs here!
 contig_list = ["I", "II", "III", "IV", "V", "X", "MtDNA"]
@@ -14,7 +15,8 @@ contigs = Channel.from(contig_list)
 /*
     Filtering configuration
 */
-min_depth=3
+
+min_depth=10
 qual=30
 mq=40
 dv_dp=0.5
@@ -27,9 +29,15 @@ import groovy.json.JsonSlurper
 
 if (test == 'true') {
     strain_json = "isotype_set_test.json"
+    min_depth=1
+    qual=1
+    mq=1
+    dv_dp=0
 } else {
     strain_json = "isotype_set.json"
 }
+
+def strain_set = []
 
 def strainFile = new File(strain_json)
 def strainJSON = new JsonSlurper().parseText(strainFile.text)
@@ -67,22 +75,20 @@ process perform_alignment {
     input:
         set SM, RG, fq1, fq2, fq_pair_id from strain_set
     output:
-        set val(fq_pair_id), file("${fq_pair_id}.bam"), file("${fq_pair_id}.bam.bai") into fq_bam_set
+        set val(SM), file("${fq_pair_id}.bam"), file("${fq_pair_id}.bam.bai") into fq_bam_set
 
     
     """
-        bwa mem -t ${cores} -R '${RG}' ${reference} ${fq1} ${fq2} | \\
-        sambamba view --nthreads=${cores} --sam-input --format=bam --with-header /dev/stdin | \\
-        sambamba sort --nthreads=${cores} --show-progress --tmpdir=${tmpdir} --out=${fq_pair_id}.bam /dev/stdin
-        sambamba index --nthreads=${cores} ${fq_pair_id}.bam
+        bwa mem -t ${alignment_cores} -R '${RG}' ${reference} ${fq1} ${fq2} | \\
+        sambamba view --nthreads=${alignment_cores} --sam-input --format=bam --with-header /dev/stdin | \\
+        sambamba sort --nthreads=${alignment_cores} --show-progress --tmpdir=${tmpdir} --out=${fq_pair_id}.bam /dev/stdin
+        sambamba index --nthreads=${alignment_cores} ${fq_pair_id}.bam
     """
 }
-
 
 /* 
   Merge - Generate SM Bam
 */
-
 
 process merge_bam {
 
@@ -100,26 +106,33 @@ process merge_bam {
         file("${SM}.duplicates.txt") into duplicates_file
         
     """
-
     count=`echo ${bam.join(" ")} | tr ' ' '\\n' | wc -l`
 
     if [ "\${count}" -eq "1" ]; then
         ln -s ${bam.join(" ")} ${SM}.merged.bam
         ln -s ${bam.join(" ")}.bai ${SM}.merged.bam.bai
     else
-        sambamba merge --nthreads=${cores} --show-progress ${SM}.merged.bam ${bam.join(" ")}
-        sambamba index --nthreads=${cores} ${SM}.merged.bam
+        sambamba merge --nthreads=${alignment_cores} --show-progress ${SM}.merged.bam ${bam.join(" ")}
+        sambamba index --nthreads=${alignment_cores} ${SM}.merged.bam
     fi
 
     picard MarkDuplicates I=${SM}.merged.bam O=${SM}.bam M=${SM}.duplicates.txt VALIDATION_STRINGENCY=SILENT REMOVE_DUPLICATES=false
-    sambamba index --nthreads=${cores} ${SM}.bam
+    sambamba index --nthreads=${alignment_cores} ${SM}.bam
     """
 }
 
-SM_bam_set.into { bam_idxstats; bams_stats; merged_bams_for_coverage; bam_call_variants_individual; bam_coverage }
+SM_bam_set.into { 
+                  bam_idxstats; 
+                  bam_stats;
+                  bam_coverage;
+                  bam_snp_individual;
+                  bam_snp_union;
+}
 
 process SM_idx_stats {
     
+    tag { SM }
+
     input:
         set val(SM), file("${SM}.bam"), file("${SM}.bam.bai") from bam_idxstats
     output:
@@ -144,9 +157,7 @@ process SM_combine_idx_stats {
         echo -e "SM\\treference\\treference_length\\tmapped_reads\\tunmapped_reads" > SM_bam_idxstats.tsv
         cat ${bam_idxstats.join(" ")} >> SM_bam_idxstats.tsv
     """
-
 }
-
 
 /*
     SM bam stats
@@ -182,8 +193,6 @@ process combine_SM_bam_stats {
         cat ${stat_files.join(" ")} >> SM_bam_stats.tsv
     """
 }
-
-
 
 process format_duplicates {
 
@@ -225,11 +234,9 @@ process coverage_SM {
     """
 }
 
-
 process coverage_SM_merge {
 
-    publishDir analysis_dir + "/SM", mode: 'copy'
-
+    publishDir analysis_dir + "/isotype", mode: 'copy'
 
     input:
         val sm_set from SM_coverage.toSortedList()
@@ -245,16 +252,20 @@ process coverage_SM_merge {
         # Generate condensed version
         cat <(echo -e 'strain\\tcoverage') <(cat SM_coverage.full.tsv | grep 'genome' | grep 'depth_of_coverage' | cut -f 1,6) > SM_coverage.tsv
     """
-
 }
 
+/*
+    Call Variants
+*/
 
 process call_variants_individual {
 
     tag { SM }
 
+    cpus variant_cores
+
     input:
-        set val(SM), file("${SM}.bam"), file("${SM}.bam.bai") from bam_call_variants_individual
+        set val(SM), file("${SM}.bam"), file("${SM}.bam.bai") from bam_snp_individual
 
     output:
         file("${SM}.individual.sites.tsv") into individual_sites
@@ -262,7 +273,7 @@ process call_variants_individual {
     """
     # Perform individual-level calling
     contigs="`samtools view -H ${SM}.bam | grep -Po 'SN:([^\\W]+)' | cut -c 4-40`"
-    echo \${contigs} | tr ' ' '\\n' | xargs --verbose -I {} -P ${cores} sh -c "samtools mpileup --redo-BAQ -r {} --BCF --output-tags DP,AD,ADF,ADR,SP --fasta-ref ${reference} ${SM}.bam | bcftools call --skip-variants indels --variants-only --multiallelic-caller -O z  -  > ${SM}.{}.individual.vcf.gz"
+    echo \${contigs} | tr ' ' '\\n' | xargs --verbose -I {} -P ${variant_cores} sh -c "samtools mpileup --redo-BAQ -r {} --BCF --output-tags DP,AD,ADF,ADR,SP --fasta-ref ${reference} ${SM}.bam | bcftools call --skip-variants indels --variants-only --multiallelic-caller -O z  -  > ${SM}.{}.individual.vcf.gz"
     order=`echo \${contigs} | tr ' ' '\\n' | awk '{ print "${SM}." \$1 ".individual.vcf.gz" }'`
     
     # Output variant sites
@@ -277,10 +288,6 @@ process call_variants_individual {
 
     """
 }
-
-/*
-    Merge individual sites
-*/
 
 process merge_variant_list {
 
@@ -304,40 +311,40 @@ process merge_variant_list {
     """
 }
 
-/* 
-    Call variants using the merged site list
-*/
-
-
-union_vcf_channel = merged_bams_union.spread(gz_sitelist)
+union_vcf_set = bam_snp_union.spread(gz_sitelist)
 
 process call_variants_union {
 
     tag { SM }
 
+    cpus variant_cores
+
     input:
-        val SM from merged_SM_union
-        set file("${SM}.bam"), file("${SM}.bam.bai"), file('sitelist.tsv.gz'), file('sitelist.tsv.gz.tbi') from union_vcf_channel
+        set val(SM), file("${SM}.bam"), file("${SM}.bam.bai"), file('sitelist.tsv.gz'), file('sitelist.tsv.gz.tbi') from union_vcf_set
 
     output:
         val SM into union_vcf_SM
-        file("${SM}.union.vcf.gz") into union_vcf_set
-        file("${SM}.union.vcf.gz.csi") into union_vcf_set_indices
-
+        file("${SM}.union.vcf.gz") into union_vcf_list
 
     """
         contigs="`samtools view -H ${SM}.bam | grep -Po 'SN:([^\\W]+)' | cut -c 4-40`"
-        echo \${contigs} | tr ' ' '\\n' | xargs --verbose -I {} -P ${cores} sh -c "samtools mpileup --redo-BAQ -r {} --BCF --output-tags DP,AD,ADF,ADR,INFO/AD,SP --fasta-ref ${reference} ${SM}.bam | bcftools call -T sitelist.tsv.gz --skip-variants indels --multiallelic-caller -O z  -  > ${SM}.{}.union.vcf.gz"
+        echo \${contigs} | tr ' ' '\\n' | xargs --verbose -I {} -P ${variant_cores} sh -c "samtools mpileup --redo-BAQ -r {} --BCF --output-tags DP,AD,ADF,ADR,INFO/AD,SP --fasta-ref ${reference} ${SM}.bam | bcftools call -T sitelist.tsv.gz --skip-variants indels --multiallelic-caller -O z  -  > ${SM}.{}.union.vcf.gz"
         order=`echo \${contigs} | tr ' ' '\\n' | awk '{ print "${SM}." \$1 ".union.vcf.gz" }'`
-
-        # Output variant sites
-        bcftools concat \${order} -O v | vk geno het-polarization - | bcftools view -O z > ${SM}.union.vcf.gz
+        # "
+        # Concatenate and filter
+        bcftools concat \${order} -O v | \\
+        vk geno het-polarization - | \\
+        bcftools filter -O u --threads ${variant_cores} --set-GTs . --include "QUAL >= ${qual} || FORMAT/GT == '0/0'" |  \\
+        bcftools filter -O u --threads ${variant_cores} --set-GTs . --include "FORMAT/DP > ${min_depth}" | \\
+        bcftools filter -O u --threads ${variant_cores} --set-GTs . --include "INFO/MQ > ${mq}" | \\
+        bcftools filter -O u --threads ${variant_cores} --set-GTs . --include "(FORMAT/AD[1])/(FORMAT/DP) >= ${dv_dp} || FORMAT/GT == '0/0'" | \\
+        bcftools filter --mode + --soft-filter het --exclude 'AC==1' | \\
+        vk geno transfer-filter - | \\
+        bcftools view -O z > ${SM}.union.vcf.gz
         bcftools index ${SM}.union.vcf.gz
         rm \${order}
     """
-
 }
-
 
 process generate_union_vcf_list {
 
@@ -346,7 +353,7 @@ process generate_union_vcf_list {
     publishDir analysis_dir + "/vcf", mode: 'copy'
 
     input:
-       val vcf_set from union_vcf_set.toSortedList()
+       val vcf_set from union_vcf_list.toSortedList()
 
     output:
        file("union_vcfs.txt") into union_vcfs
@@ -360,7 +367,7 @@ union_vcfs_in = union_vcfs.spread(contigs)
 
 process merge_union_vcf_chromosome {
 
-    cpus variant_cores
+    cpus alignment_cores
 
     tag { chrom }
 
@@ -372,11 +379,10 @@ process merge_union_vcf_chromosome {
         file("${chrom}.merged.raw.vcf.gz") into raw_vcf
 
     """
-        bcftools merge --threads ${variant_cores} --regions ${chrom} -O z -m all --file-list ${union_vcfs} > ${chrom}.merged.raw.vcf.gz
+        bcftools merge --threads ${alignment_cores} --regions ${chrom} -O z -m all --file-list ${union_vcfs} > ${chrom}.merged.raw.vcf.gz
         bcftools index ${chrom}.merged.raw.vcf.gz
     """
 }
-
 
 // Generate a list of ordered files.
 contig_raw_vcf = contig_list*.concat(".merged.raw.vcf.gz")
@@ -404,7 +410,7 @@ process concatenate_union_vcf {
     """
 }
 
-process filter_union_vcf {
+process filter_merged_vcf {
 
     publishDir analysis_dir + "/vcf", mode: 'copy'
 
@@ -412,79 +418,156 @@ process filter_union_vcf {
         set file("merged.raw.vcf.gz"), file("merged.raw.vcf.gz.csi") from raw_vcf_concatenated
 
     output:
-        set file("merged.filtered.vcf.gz"), file("merged.filtered.vcf.gz.csi") into filtered_vcf
+        set file("filtered.vcf.gz"), file("filtered.vcf.gz.csi") into filtered_vcf
+        set val('filtered'), file("filtered.vcf.gz"), file("filtered.vcf.gz.csi") into filtered_vcf_stat
 
     """
-        min_depth=${min_depth}
-        qual=${qual}
-        mq=${mq}
-        dv_dp=${dv_dp}
-
         bcftools view merged.raw.vcf.gz | \\
-        vk geno het-polarization - | \\
-        bcftools filter -O u --threads 16 --set-GTs . --include "QUAL >= \${qual} || FORMAT/GT == '0/0'" |  \\
-        bcftools filter -O u --threads 16 --set-GTs . --include "FORMAT/DP > \${min_depth}" | \\
-        bcftools filter -O u --threads 16 --set-GTs . --include "INFO/MQ > \${mq}" | \\
-        bcftools filter -O u --threads 16 --set-GTs . --include "(FORMAT/AD[1])/(FORMAT/DP) >= \${dv_dp} || FORMAT/GT == '0/0'" | \\
-        bcftools view -O z - > merged.filtered.vcf.gz
-        bcftools index -f merged.filtered.vcf.gz
+        vk filter MISSING --max=0.90 --soft-filter="high_missing" --mode=x - | \
+        vk filter HET --max=0.10 --soft-filter="high_heterozygosity" --mode=+ - | \
+        vk filter ALT --max=0.99 - | \
+        vk filter REF --min=1 - | \
+        vk filter ALT --min=1 - | \
+        vcffixup - | \\
+        bcftools view -O z - > filtered.vcf.gz
+        bcftools index -f filtered.vcf.gz
     """
 }
 
-filtered_vcf.into { filtered_vcf_gtcheck; filtered_vcf_stat; gtcheck_no_all_ref; filtered_vcf_phylo }
+filtered_vcf.into { filtered_vcf_snpeff; filtered_vcf_to_clean; filtered_vcf_gtcheck; filtered_vcf_phylo }
 
-process gen_gtcheck_vcf {
+/*
+process annotate_vcf_snpeff {
 
     publishDir analysis_dir + "/vcf", mode: 'copy'
 
     input:
-        set file("merged.filtered.vcf.gz"), file("merged.filtered.vcf.gz.csi") from filtered_vcf_gtcheck
-
-    output:
-        set file("merged.filtered.snp.vcf.gz"), file("merged.filtered.snp.vcf.gz.csi") into filtered_snp_vcf
-        file("merged.filtered.snp.vcf.gz.csi")
+        set file("merged.filtered.vcf.gz"), file("merged.filtered.vcf.gz.csi") from filtered_vcf_snpeff
 
     """
         bcftools view -O v merged.filtered.vcf.gz | \\
-        vk filter REF --min=1 - | \\
-        vk filter ALT --min=1 - | \\
-        bcftools view -O z  > merged.filtered.snp.vcf.gz
-        bcftools index merged.filtered.snp.vcf.gz
+        snpEff eff WS256 | \\
+        bcftools view -O z > snpeff.vcf.gz
+        bcftools index snpeff.vcf.gz
     """
 
 }
+*/
+
+process generate_clean_vcf {
+
+    publishDir analysis_dir + "/vcf", mode: 'copy'
+
+    input:
+        set file("filtered.vcf.gz"), file("filtered.vcf.gz.csi") from filtered_vcf_to_clean
+
+    output:
+        set file("clean.vcf.gz"), file("clean.vcf.gz.csi") into clean_vcf_to_impute
+        set val('clean'), file("clean.vcf.gz"), file("clean.vcf.gz.csi") into clean_vcf_stat
+
+    """
+        # Generate clean vcf
+        bcftools view -m 2 -M 2 --types snps filtered.vcf.gz | \\
+        bcftools filter --set-GTs . --exclude 'FORMAT/FT != "PASS"' | \\
+        vk filter MISSING --max=0.90 - | \\
+        vk filter HET --max=0.10 - | \\
+        vk filter REF --min=1 - | \\
+        vk filter ALT --min=1 - | \\
+        bcftools view -O z > clean.vcf.gz
+        bcftools index -f clean.vcf.gz
+    """
+}
+
+
+process imputation {
+
+    publishDir analysis_dir + "/vcf", mode: 'copy'
+
+    cpus variant_cores
+
+    input:
+        set file("filtered.vcf.gz"), file("filtered.vcf.gz.csi") from clean_vcf_to_impute 
+    output:
+        set file("impute.vcf.gz"), file("impute.vcf.gz.csi") into impute_vcf
+        set val('impute'), file("impute.vcf.gz"), file("impute.vcf.gz.csi") into impute_vcf_stat
+
+    """
+        java -jar ${beagle_location} nthreads=${variant_cores} window=8000 overlap=3000 impute=true ne=17500 gt=filtered.vcf.gz out=impute
+        bcftools index -f impute.vcf.gz
+    """
+}
+
+impute_vcf.into { kinship_vcf;  mapping_vcf; }
+
+process make_kinship {
+
+    publishDir analysis_dir + "/cegwas", mode: 'copy'
+
+    input:
+        set file("impute.vcf.gz"), file("impute.vcf.gz.csi") from kinship_vcf
+    output:
+        file("kinship.Rda")
+
+    """
+        Rscript -e 'library(cegwas); kinship <- generate_kinship("impute.vcf.gz"); save(kinship, file = "kinship.Rda");'
+    """
+
+}
+
+process make_mapping {
+
+    publishDir analysis_dir + "/cegwas", mode: 'copy'
+
+    input:
+        set file("impute.vcf.gz"), file("impute.vcf.gz.csi") from mapping_vcf
+    output:
+        file("snps.Rda")
+
+    """
+        Rscript -e 'library(cegwas); snps <- generate_mapping("impute.vcf.gz"); save(snps, file = "snps.Rda");'
+    """
+
+}
+
 
 process calculate_gtcheck {
 
     publishDir analysis_dir + "/concordance", mode: 'copy'
 
     input:
-        set file("merged.filtered.snp.vcf.gz"), file("merged.filtered.snp.vcf.gz.csi") from filtered_snp_vcf
+        set file("merged.filtered.snp.vcf.gz"), file("merged.filtered.snp.vcf.gz.csi") from filtered_vcf_gtcheck
 
     output:
-        file("filtered.stats.snp.txt")
         file("gtcheck.tsv") into gtcheck
 
     """
         echo -e "discordance\\tsites\\tavg_min_depth\\ti\\tj" > gtcheck.tsv
         bcftools gtcheck -H -G 1 merged.filtered.snp.vcf.gz | egrep '^CN' | cut -f 2-6 >> gtcheck.tsv
-        bcftools stats --verbose merged.filtered.snp.vcf.gz > filtered.stats.snp.txt
     """
 
 }
 
+/* 
+    Stat VCFs
+*/
+
+
+vcf_stat_set = filtered_vcf_stat.concat( clean_vcf_stat, impute_vcf_stat)
+
 process stat_tsv {
+
+    tag { vcf_stat }
 
     publishDir analysis_dir + "/vcf", mode: 'copy'
 
     input:
-        set file("merged.filtered.vcf.gz"), file("merged.filtered.vcf.gz.csi") from filtered_vcf_stat
+        set val(vcf_stat), file("${vcf_stat}.vcf.gz"), file("${vcf_stat}.vcf.gz.csi") from vcf_stat_set
 
     output:
-        file("merged.filtered.stats") into filtered_stats
+        file("${vcf_stat}.stats.txt") into filtered_stats
 
     """
-        bcftools stats --verbose merged.filtered.vcf.gz > merged.filtered.stats
+        bcftools stats --verbose ${vcf_stat}.vcf.gz > ${vcf_stat}.stats.txt
     """
 
 }
@@ -520,35 +603,11 @@ process process_concordance_results {
 
 }
 
-/*
-    Network analysis
-*/
-
-process examine_concordance_network {
-
-    publishDir analysis_dir + "/concordance", mode: "copy"
-
-    input:
-        file("graph.py") from Channel.fromPath("graph.py")
-        file("SM_coverage.tsv") from SM_coverage_network
-        file("gtcheck.tsv") from gtcheck_network
-        file("sitelist.tsv") from sitelist
-
-    output:
-        file("problem_SM.tsv")
-
-    """
-    echo "None!" > problem_SM.tsv
-    python graph.py
-    """
-
-}
 
 filtered_vcf_phylo_contig = filtered_vcf_phylo.spread(["I", "II", "III", "IV", "V", "X", "MtDNA", "genome"])
 
 /*
     Phylo analysis
-*/
 
 process phylo_analysis {
 
@@ -592,3 +651,5 @@ process plot_trees {
     """
 
 }
+
+*/
