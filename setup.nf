@@ -56,7 +56,7 @@ process generate_sets {
 
     # Generate strain and isotype concordance sets
     fq_set = list()
-    fstrains <- lapply(split(fq, fq$strain), function(i) {
+    fstrains <- lapply(split(fq, fq$isotype), function(i) {
         lapply(split(i, i$RG), function(x) {
             f1 <- x$filename
             f2 <- gsub("1P.fq.gz", "2P.fq.gz", f1)
