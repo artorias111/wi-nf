@@ -1,12 +1,11 @@
-# concordance-nf
+# wi-nf
 
-Perform Fastq-Profiling in the current working directory.
+The variant calling pipeline for wild isolates.
 
 ### Usage
 
 ```
-# cd to directory of fastqs
-nextflow run Andersenlab/concordance-nf
+nextflow run main.nf -resume
 ```
 
 ### Installing Telseq
