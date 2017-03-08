@@ -1,11 +1,10 @@
 #!/usr/bin/env nextflow
-params.analysis_dir = "/projects/b1059/analysis/WI-Results"
 
 process dump_json {
 
     executor 'local'
 
-    publishDir "/projects/b1059/workflows/concordance-nf", mode: "copy"
+    publishDir "/projects/b1059/workflows/wi-nf", mode: "copy"
 
     output:
     file 'fq_data.json' into fq_data
@@ -21,7 +20,7 @@ process generate_sets {
 
     executor 'local'
 
-    publishDir "/projects/b1059/workflows/concordance-nf", mode: "copy"
+    publishDir "/projects/b1059/workflows/wi-nf", mode: "copy"
 
     input:
     file 'fq_data.json' from fq_data
