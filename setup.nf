@@ -27,8 +27,7 @@ process generate_sets {
     file 'fq_data.json' from fq_data
 
     output:
-    file 'strain_set.json' into strain_json
-    //file 'isotype_set.json' into isotype_json
+    file 'isotype_set.json' into isotype_json
 
     '''
     #!/usr/bin/env Rscript --vanilla
@@ -53,7 +52,7 @@ process generate_sets {
       dplyr::filter(grepl("1P.fq.gz", filename)) %>%
       dplyr::mutate(basename = basename(filename)) %>%
       dplyr::mutate(ID = paste0(seq_folder, "____", gsub("1P.fq.gz", "", basename))) %>%
-      dplyr::mutate(LB = library, SM = strain) %>%
+      dplyr::mutate(LB = library, SM = isotype) %>%
       dplyr::mutate(RG = paste0("@RG\\tID:", ID, "\\tLB:", LB, "\\tSM:", SM))
 
     # Generate strain and isotype concordance sets
@@ -67,20 +66,7 @@ process generate_sets {
        })
     }) %>% jsonlite::toJSON(.)
 
-    readr::write_lines(fstrains, "strain_set.json")
-
-
-    #fq %>% dplyr::mutate(SM = isotype) %>%
-    #dplyr::mutate(RG = paste0("@RG\tID:", ID, "\tLB:", LB, "\tSM:", SM))
-    #
-    ## Isotype
-    #fisotype <- lapply(split(fq, fq$isotype), function(i) {
-    #    lapply(split(i, i$RG), function(x) {
-    #   c(x$filename, gsub("_1P.fq.gz", "_2P.fq.gz", x$filename))
-    #   })
-    #}) %>% jsonlite::toJSON(.)
-
-    #readr::write_lines(fstrains, "isotype_set.json")
+    readr::write_lines(fstrains, "isotype_set.json")
 
     '''
 }
