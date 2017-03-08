@@ -21,7 +21,7 @@ qual=30
 mq=40
 dv_dp=0.5
 
-println "Running Concordance on Wild Isolates"
+println "Running Wild Isolate Pipeline!!!"
 println "Using Reference: ${genome}" 
 
 // Construct strain and isotype lists
