@@ -314,6 +314,7 @@ process merge_variant_list {
 
 union_vcf_set = bam_snp_union.spread(gz_sitelist)
 
+
 process call_variants_union {
 
     tag { SM }
@@ -335,10 +336,10 @@ process call_variants_union {
         # Concatenate and filter
         bcftools concat \${order} -O v | \\
         vk geno het-polarization - | \\
-        bcftools filter -O u --threads ${variant_cores} --set-GTs . --include "QUAL >= ${qual} || FORMAT/GT == '0/0'" |  \\
-        bcftools filter -O u --threads ${variant_cores} --set-GTs . --include "FORMAT/DP > ${min_depth}" | \\
-        bcftools filter -O u --threads ${variant_cores} --set-GTs . --include "INFO/MQ > ${mq}" | \\
-        bcftools filter -O u --threads ${variant_cores} --set-GTs . --include "(FORMAT/AD[1])/(FORMAT/DP) >= ${dv_dp} || FORMAT/GT == '0/0'" | \\
+        bcftools filter -O u --threads ${variant_cores} --mode + --soft-filter quality --include "QUAL >= ${qual} || FORMAT/GT == '0/0'" |  \\
+        bcftools filter -O u --threads ${variant_cores} --mode + --soft-filter min_depth --include "FORMAT/DP > ${min_depth}" | \\
+        bcftools filter -O u --threads ${variant_cores} --mode + --soft-filter mapping_quality --include "INFO/MQ > ${mq}" | \\
+        bcftools filter -O u --threads ${variant_cores} --mode + --soft-filter dv_dp --include "(FORMAT/AD[1])/(FORMAT/DP) >= ${dv_dp} || FORMAT/GT == '0/0'" | \\
         bcftools filter --mode + --soft-filter het --exclude 'AC==1' | \\
         vk geno transfer-filter - | \\
         bcftools view -O z > ${SM}.union.vcf.gz
@@ -661,7 +662,7 @@ process download_annotation_files {
     output:
         set val("phastcons"), file("elegans.phastcons.wib") into phastcons
         set val("phylop"), file("elegans.phylop.wib") into phylop
-        set val("repeatmasker"), file("repeatmasker.bb") into repeatmasker
+        set val("repeatmasker"), file("elegans_repeatmasker.bb") into repeatmasker
 
     """
         wget ftp://ftp.wormbase.org/pub/wormbase/releases/WS258/MULTI_SPECIES/hub/elegans/elegans.phastcons.wib
