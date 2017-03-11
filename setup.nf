@@ -1,11 +1,10 @@
 #!/usr/bin/env nextflow
-params.analysis_dir = "/projects/b1059/analysis/WI-Results"
 
 process dump_json {
 
     executor 'local'
 
-    publishDir "/projects/b1059/workflows/concordance-nf", mode: "copy"
+    publishDir "/projects/b1059/workflows/wi-nf", mode: "copy"
 
     output:
     file 'fq_data.json' into fq_data
@@ -21,7 +20,7 @@ process generate_sets {
 
     executor 'local'
 
-    publishDir "/projects/b1059/workflows/concordance-nf", mode: "copy"
+    publishDir "/projects/b1059/workflows/wi-nf", mode: "copy"
 
     input:
     file 'fq_data.json' from fq_data
@@ -57,7 +56,7 @@ process generate_sets {
 
     # Generate strain and isotype concordance sets
     fq_set = list()
-    fstrains <- lapply(split(fq, fq$strain), function(i) {
+    fstrains <- lapply(split(fq, fq$isotype), function(i) {
         lapply(split(i, i$RG), function(x) {
             f1 <- x$filename
             f2 <- gsub("1P.fq.gz", "2P.fq.gz", f1)

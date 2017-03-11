@@ -1,6 +1,7 @@
 #!/usr/bin/env nextflow
 tmpdir = config.tmpdir
 reference = config.reference
+annotation_reference = config.annotation_reference
 alignment_cores = config.alignment_cores
 variant_cores = config.variant_cores
 genome = config.genome
@@ -21,7 +22,7 @@ qual=30
 mq=40
 dv_dp=0.5
 
-println "Running Concordance on Wild Isolates"
+println "Running Wild Isolate Pipeline!!!"
 println "Using Reference: ${genome}" 
 
 // Construct strain and isotype lists
@@ -436,7 +437,6 @@ process filter_merged_vcf {
 
 filtered_vcf.into { filtered_vcf_snpeff; filtered_vcf_to_clean; filtered_vcf_gtcheck; filtered_vcf_phylo }
 
-/*
 process annotate_vcf_snpeff {
 
     publishDir analysis_dir + "/vcf", mode: 'copy'
@@ -444,15 +444,18 @@ process annotate_vcf_snpeff {
     input:
         set file("merged.filtered.vcf.gz"), file("merged.filtered.vcf.gz.csi") from filtered_vcf_snpeff
 
+    output:
+        set file("snpeff.vcf.gz"), file("snpeff.vcf.gz.csi") into snpeff_vcf
+
     """
         bcftools view -O v merged.filtered.vcf.gz | \\
-        snpEff eff WS256 | \\
+        snpEff eff ${annotation_reference} | \\
         bcftools view -O z > snpeff.vcf.gz
         bcftools index snpeff.vcf.gz
     """
 
 }
-*/
+
 
 process generate_clean_vcf {
 
@@ -608,7 +611,7 @@ filtered_vcf_phylo_contig = filtered_vcf_phylo.spread(["I", "II", "III", "IV", "
 
 /*
     Phylo analysis
-
+*/
 process phylo_analysis {
 
     publishDir analysis_dir + "/phylo", mode: "copy"
@@ -652,4 +655,59 @@ process plot_trees {
 
 }
 
-*/
+process download_annotation_files {
+    executor 'local'
+
+    output:
+        set val("phastcons"), file("elegans.phastcons.wib") into phastcons
+        set val("phylop"), file("elegans.phylop.wib") into phylop
+        set val("repeatmasker"), file("repeatmasker.bb") into repeatmasker
+
+    """
+        wget ftp://ftp.wormbase.org/pub/wormbase/releases/WS258/MULTI_SPECIES/hub/elegans/elegans.phastcons.wib
+        wget ftp://ftp.wormbase.org/pub/wormbase/releases/WS258/MULTI_SPECIES/hub/elegans/elegans.phylop.wib
+        wget ftp://ftp.wormbase.org/pub/wormbase/releases/WS258/MULTI_SPECIES/hub/elegans/elegans_repeatmasker.bb
+    """
+}
+
+phastcons.mix(phylop).into { wig }
+
+process wig_to_bed {
+
+    publishDir 'tracks', mode: 'copy'
+
+    input:
+        set val(track_name), file("track.wib") from wig
+    output:
+        file("${track_name}.bed.gz") into bed_tracks
+        file("${track_name}.bed.gz.tbi") into bed_indices
+
+    """
+        bigWigToBedGraph track.wib ${track_name}.bed
+        bgzip ${track_name}.bed
+        tabix ${track_name}.bed.gz
+    """
+
+}
+
+process annotate_vcf {
+
+    publishDir analysis_dir + "/vcf", mode: 'copy'
+
+    cpus alignment_cores
+
+    input:
+        set file('snpeff.vcf.gz'), file('snpeff.vcf.gz.csi') from snpeff_vcf
+        file(track) from bed_tracks.toSortedList()
+        file(track) from bed_indices.toSortedList()
+        file('vcf_anno.conf') from Channel.fromPath("vcfanno.conf")
+
+    output:
+        set file("WI.vcf.gz"), file("WI.vcf.gz.csi")
+    """
+        vcfanno -p ${alignment_cores} vcf_anno.conf snpeff.vcf.gz | bcftools view -O z > WI.vcf.gz
+        bcftools index WI.vcf.gz
+    """
+
+}
+

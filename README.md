@@ -2,10 +2,18 @@
 
 The variant calling pipeline for wild isolates.
 
+### Setup
+
+Information regarding the set of fastqs belonging to a particular isotype are organized in a json document called `isotype_set.json`. This file can be generated using `setup.nf` as follows:
+
+```
+nextflow run setup.nf
+```
+
 ### Usage
 
 ```
-nextflow run main.nf -resume
+nextflow run main.nf -resume -e.test=false
 ```
 
 ### Installing Telseq
