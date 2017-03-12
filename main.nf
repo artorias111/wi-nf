@@ -128,6 +128,7 @@ SM_bam_set.into {
                   bam_coverage;
                   bam_snp_individual;
                   bam_snp_union;
+                  bam_telseq;
 }
 
 process SM_idx_stats {
@@ -252,6 +253,38 @@ process coverage_SM_merge {
 
         # Generate condensed version
         cat <(echo -e 'strain\\tcoverage') <(cat SM_coverage.full.tsv | grep 'genome' | grep 'depth_of_coverage' | cut -f 1,6) > SM_coverage.tsv
+    """
+}
+
+/*
+    telseq
+*/
+
+process call_telseq {
+
+    input:
+        file('in.bam') from bam_telseq
+    output:
+        file("telseq_out.txt") into telseq_results
+
+    """
+        telseq -z TTAGGC -m in.bam > telseq_out.txt
+    """
+}
+
+process combine_telseq {
+
+    publishDir analysis_dir + "/SM"
+
+    input:
+        file("telseq?.txt") from telseq_results.toSortedList()
+
+    output:
+        file("telseq.tsv")
+
+    """
+        telseq -h > telseq.tsv
+        cat telseq*.txt >> telseq.tsv
     """
 }
 
