@@ -262,13 +262,15 @@ process coverage_SM_merge {
 
 process call_telseq {
 
+    tag { SM }
+
     input:
-        file('in.bam') from bam_telseq
+        set val(SM), file("${SM}.bam"), file("${SM}.bam.bai") from bam_telseq
     output:
         file("telseq_out.txt") into telseq_results
 
     """
-        telseq -z TTAGGC -m in.bam > telseq_out.txt
+        telseq -z TTAGGC -m ${SM}.bam > telseq_out.txt
     """
 }
 
