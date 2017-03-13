@@ -147,7 +147,7 @@ process SM_idx_stats {
 
 process SM_combine_idx_stats {
 
-    publishDir analysis_dir + "/SM", mode: 'copy'
+    publishDir analysis_dir + "/isotype", mode: 'copy'
 
     input:
         val bam_idxstats from bam_idxstats_set.toSortedList()
