@@ -5,6 +5,7 @@ annotation_reference = config.annotation_reference
 alignment_cores = config.alignment_cores
 variant_cores = config.variant_cores
 genome = config.genome
+date = config.date
 analysis_dir = config.analysis_dir
 SM_alignments_dir = config.SM_alignments_dir
 beagle_location = config.beagle_location
