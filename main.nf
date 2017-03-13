@@ -726,7 +726,7 @@ process wig_to_bed {
 
 }
 
-process annotate_vcf {
+process final_vcf {
 
     publishDir analysis_dir + "/vcf", mode: 'copy'
 
@@ -739,10 +739,11 @@ process annotate_vcf {
         file('vcf_anno.conf') from Channel.fromPath("vcfanno.conf")
 
     output:
-        set file("WI.vcf.gz"), file("WI.vcf.gz.csi")
+        set file("WI.${date}.vcf.gz"), file("WI.${date}.vcf.gz.csi"), file("WI.${date}.vcf.gz.tbi")
     """
-        vcfanno -p ${alignment_cores} vcf_anno.conf snpeff.vcf.gz | bcftools view -O z > WI.vcf.gz
-        bcftools index WI.vcf.gz
+        vcfanno -p ${alignment_cores} vcf_anno.conf snpeff.vcf.gz | bcftools view -O z > WI.${date}.vcf.gz
+        bcftools index WI.${date}.vcf.gz
+        tabix WI.${date}.vcf.gz
     """
 
 }
