@@ -545,10 +545,10 @@ process make_kinship {
     input:
         set file("impute.vcf.gz"), file("impute.vcf.gz.csi") from kinship_vcf
     output:
-        file("kinship.Rda")
+        file("impute.${date}.vcf.gz")
 
     """
-        Rscript -e 'library(cegwas); kinship <- generate_kinship("impute.vcf.gz"); save(kinship, file = "kinship.Rda");'
+        Rscript -e 'library(cegwas); kinship <- generate_kinship("impute.vcf.gz"); save(kinship, file = "kinship.${date}.Rda");'
     """
 
 }
@@ -560,10 +560,10 @@ process make_mapping {
     input:
         set file("impute.vcf.gz"), file("impute.vcf.gz.csi") from mapping_vcf
     output:
-        file("snps.Rda")
+        file("snps.${date}.Rda")
 
     """
-        Rscript -e 'library(cegwas); snps <- generate_mapping("impute.vcf.gz"); save(snps, file = "snps.Rda");'
+        Rscript -e 'library(cegwas); snps <- generate_mapping("impute.vcf.gz"); save(snps, file = "snps.${date}.Rda");'
     """
 
 }
