@@ -270,7 +270,7 @@ process call_telseq {
         file("telseq_out.txt") into telseq_results
 
     """
-        telseq -z TTAGGC -m ${SM}.bam > telseq_out.txt
+        telseq -z TTAGGC -H ${SM}.bam > telseq_out.txt
     """
 }
 
