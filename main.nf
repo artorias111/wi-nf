@@ -334,8 +334,8 @@ process merge_variant_list {
         val sites from individual_sites.toSortedList()
 
     output:
-        set file("sitelist.tsv.gz"), file("sitelist.tsv.gz.tbi") into gz_sitelist
-        set file("sitelist.tsv.gz"), file("sitelist.tsv.gz.tbi") into fq_gz_sitelist
+        file("sitelist.tsv.gz") into gz_sitelist
+        file("sitelist.tsv.gz.tbi") into gz_sitelist_index
         file("sitelist.tsv") into sitelist
         file("sitelist.count.txt")
 
@@ -348,8 +348,7 @@ process merge_variant_list {
     """
 }
 
-union_vcf_set = bam_snp_union.spread(gz_sitelist)
-
+union_vcf_set = bam_snp_union.combine(gz_sitelist).combine(gz_sitelist_index)
 
 process call_variants_union {
 
