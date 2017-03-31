@@ -287,7 +287,7 @@ process combine_telseq {
 
     """
         telseq -h > telseq.tsv
-        cat telseq*.txt >> telseq.tsv
+        cat telseq.tsv | awk 'NR == 1 { print "isotype\t" \$0; next } \$0 ~ "\\[" { gsub("\\[|\\]|\\.bam", "", \$0); iso = \$0 } \$0 !~ "\\[|^1" && \$1 != iso { print iso "\t" \$0}' >> telseq.tsv
     """
 }
 
