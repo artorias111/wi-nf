@@ -545,10 +545,10 @@ process make_kinship {
     input:
         set file("impute.vcf.gz"), file("impute.vcf.gz.csi") from kinship_vcf
     output:
-        file("impute.${date}.vcf.gz")
+        file("kinship.Rda")
 
     """
-        Rscript -e 'library(cegwas); kinship <- generate_kinship("impute.vcf.gz"); save(kinship, file = "kinship.${date}.Rda");'
+        Rscript -e 'library(cegwas); kinship <- generate_kinship("impute.vcf.gz"); save(kinship, file = "kinship.Rda");'
     """
 
 }
@@ -560,10 +560,10 @@ process make_mapping {
     input:
         set file("impute.vcf.gz"), file("impute.vcf.gz.csi") from mapping_vcf
     output:
-        file("snps.${date}.Rda")
+        file("snps.Rda")
 
     """
-        Rscript -e 'library(cegwas); snps <- generate_mapping("impute.vcf.gz"); save(snps, file = "snps.${date}.Rda");'
+        Rscript -e 'library(cegwas); snps <- generate_mapping("impute.vcf.gz"); save(snps, file = "snps.Rda");'
     """
 
 }
@@ -739,12 +739,28 @@ process final_vcf {
         file('vcf_anno.conf') from Channel.fromPath("vcfanno.conf")
 
     output:
-        set file("WI.${date}.vcf.gz"), file("WI.${date}.vcf.gz.csi"), file("WI.${date}.vcf.gz.tbi")
+        set file("WI.${date}.vcf.gz"), file("WI.${date}.vcf.gz.csi"), file("WI.${date}.vcf.gz.tbi") into final_vcf
+
     """
         vcfanno -p ${alignment_cores} vcf_anno.conf snpeff.vcf.gz | bcftools view -O z > WI.${date}.vcf.gz
         bcftools index WI.${date}.vcf.gz
         tabix WI.${date}.vcf.gz
     """
 
+}
+
+process generate_long_tsv {
+
+    publishDir analysis_dir + "/tsv", mode: 'copy'
+
+    input:
+        set file("WI.${date}.vcf.gz"), file("WI.${date}.vcf.gz.csi"), file("WI.${date}.vcf.gz.tbi") from final_vcf
+
+    output:
+        file("WI.${date}.tsv.gz")
+
+    """
+        vk vcf2tsv long --print-header --ANN WI.${date}.vcf.gz | gzip > WI.${date}.tsv.gz
+    """
 }
 
