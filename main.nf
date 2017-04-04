@@ -485,7 +485,7 @@ process annotate_vcf_snpeff {
 
     """
         bcftools view -O v merged.filtered.vcf.gz | \\
-        snpEff eff ${annotation_reference} | \\
+        snpEff eff -noInteraction ${annotation_reference} | \\
         bcftools view -O z > snpeff.vcf.gz
         bcftools index snpeff.vcf.gz
     """
@@ -760,7 +760,8 @@ process generate_long_tsv {
         file("WI.${date}.tsv.gz")
 
     """
-        vk vcf2tsv long --print-header --ANN WI.${date}.vcf.gz | gzip > WI.${date}.tsv.gz
+        vk vcf2tsv long --print-header --ANN WI.${date}.vcf.gz > WI.${date}.tsv
+        gzip WI.${date}.tsv
     """
 }
 
