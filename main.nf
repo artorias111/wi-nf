@@ -760,7 +760,13 @@ process generate_long_tsv {
         file("WI.${date}.tsv.gz")
 
     """
-        vk vcf2tsv long --print-header --ANN WI.${date}.vcf.gz > WI.${date}.tsv
+        echo ${contig_list.join(" ")} | tr ' ' '\\n' | xargs --verbose -I {} -P ${variant_cores} sh -c "bcftools view WI.${date}.vcf.gz {} > {}.vcf.gz && bcftools index {}.vcf.gz"
+        order=`echo ${contig_list.join(" ")} | tr ' ' '\\n' | awk '{ print \$1 ".tsv" }'`
+
+        # print header
+        vk vcf2tsv long --print-header --ANN I.vcf.gz | head -n 1 > out.tsv
+        xargs --verbose -I {} -P ${variant_cores} sh "vk vcf2tsv long --print-header --ANN {}.vcf.gz > {}.tsv"
+        cat out.tsv \${order} >> WI.${date}.tsv
         gzip WI.${date}.tsv
     """
 }
