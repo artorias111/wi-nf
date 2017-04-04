@@ -485,7 +485,7 @@ process annotate_vcf_snpeff {
 
     """
         bcftools view -O v merged.filtered.vcf.gz | \\
-        snpEff eff -noInteraction ${annotation_reference} | \\
+        snpEff eff -noInteraction -no-downstream -no-intergenic -no-upstream ${annotation_reference} | \\
         bcftools view -O z > snpeff.vcf.gz
         bcftools index snpeff.vcf.gz
     """
