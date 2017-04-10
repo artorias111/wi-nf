@@ -759,12 +759,15 @@ process generate_tsv {
     output:
         file("WI.${date}.tsv.gz")
 
+    script:
+        cdate = date.replace("-","")
     """
         echo ${contig_list.join(" ")} | tr ' ' '\\n' | xargs --verbose -I {} -P ${variant_cores} sh -c "bcftools query --regions {} -f '[%CHROM\\t%POS\\t%REF\\t%ALT\\t%FILTER\\t%GT\\t%FT\n]' WI.${date}.vcf.gz > {}.tsv"
         order=`echo ${contig_list.join(" ")} | tr ' ' '\\n' | awk '{ print \$1 ".tsv" }'`
 
-        cat <(echo 'CHROM\tPOS\tREF\tALT\tFILTER\tFT\tGT') \${order} > WI.${date}.tsv
-        gzip WI.${date}.tsv
+        cat <(echo 'CHROM\tPOS\tREF\tALT\tFILTER\tFT\tGT') \${order} > WI.${cdate}.tsv
+        gzip WI.${cdate}.tsv
+        gsutil cp WI.${cdate}.tsv.gz gs://elegansvariation.org/releases/${cdate}/
     """
 }
 
