@@ -749,7 +749,7 @@ process final_vcf {
 
 }
 
-process generate_long_tsv {
+process generate_tsv {
 
     publishDir analysis_dir + "/tsv", mode: 'copy'
 
@@ -760,13 +760,10 @@ process generate_long_tsv {
         file("WI.${date}.tsv.gz")
 
     """
-        echo ${contig_list.join(" ")} | tr ' ' '\\n' | xargs --verbose -I {} -P ${variant_cores} sh -c "bcftools view WI.${date}.vcf.gz {} > {}.vcf.gz && bcftools index {}.vcf.gz"
+        echo ${contig_list.join(" ")} | tr ' ' '\\n' | xargs --verbose -I {} -P ${variant_cores} sh -c "bcftools query --regions {} -f '[%CHROM\\t%POS\\t%REF\\t%ALT\\t%FILTER\\t%GT\\t%FT\n]' WI.${date}.vcf.gz > {}.tsv"
         order=`echo ${contig_list.join(" ")} | tr ' ' '\\n' | awk '{ print \$1 ".tsv" }'`
 
-        # print header
-        vk vcf2tsv long --print-header --ANN I.vcf.gz | head -n 1 > out.tsv
-        xargs --verbose -I {} -P ${variant_cores} sh "vk vcf2tsv long --print-header --ANN {}.vcf.gz > {}.tsv"
-        cat out.tsv \${order} >> WI.${date}.tsv
+        cat <(echo 'CHROM\tPOS\tREF\tALT\tFILTER\tFT\tGT') \${order} > WI.${date}.tsv
         gzip WI.${date}.tsv
     """
 }
