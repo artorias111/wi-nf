@@ -762,7 +762,7 @@ process generate_tsv {
     script:
         cdate = date.replace("-","")
     """
-        echo ${contig_list.join(" ")} | tr ' ' '\\n' | xargs --verbose -I {} -P ${variant_cores} sh -c "bcftools query --regions {} -f '[%CHROM\\t%POS\\t%REF\\t%ALT\\t%FILTER\\t%FT\\t%GT\n]' WI.${date}.vcf.gz > {}.tsv"
+        echo ${contig_list.join(" ")} | tr ' ' '\\n' | xargs --verbose -I {} -P ${variant_cores} sh -c "bcftools query --regions {} -f '[%CHROM\\t%POS\\t%SAMPLE\\t%REF\\t%ALT\\t%FILTER\\t%FT\\t%GT\n]' WI.${date}.vcf.gz > {}.tsv"
         order=`echo ${contig_list.join(" ")} | tr ' ' '\\n' | awk '{ print \$1 ".tsv" }'`
 
         cat <(echo 'CHROM\tPOS\tREF\tALT\tFILTER\tFT\tGT') \${order} > WI.${cdate}.tsv
