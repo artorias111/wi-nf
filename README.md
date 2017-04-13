@@ -31,5 +31,5 @@ bq load --field_delimiter "\t" \
         --ignore_unknown_values \
         andersen-lab:WI.${release_date} \
         gs://elegansvariation.org/releases/${release_date}/WI.${release_date}.tsv.gz \
-        CHROM:STRING,POS:INTEGER,REF:STRING,ALT:STRING,FILTER:STRING,FT:STRING,GT:STRING
+        CHROM:STRING,POS:INTEGER,SAMPLE:STRING,REF:STRING,ALT:STRING,FILTER:STRING,FT:STRING,GT:STRING
 ```
