@@ -26,67 +26,45 @@ dv_dp=0.5
 println "Running Wild Isolate Pipeline!!!"
 println "Using Reference: ${genome}" 
 
-// Construct strain and isotype lists
-import groovy.json.JsonSlurper
-
-if (test == 'true') {
-    strain_json = "isotype_set_test.json"
-    min_depth=1
-    qual=1
-    mq=1
-    dv_dp=0
-} else {
-    strain_json = "isotype_set.json"
-}
-
-def strain_set = []
-
-def strainFile = new File(strain_json)
-def strainJSON = new JsonSlurper().parseText(strainFile.text)
-strain_set_file = Channel.fromPath(strain_json)
-
-strainJSON.each { SM, RG ->
-    RG.each { k, v ->
-        strain_set << [SM, k, v[0], v[1], v[2]]
-    }
-}
-
+strainFile = new File("SM_sample_sheet.tsv")
+fqs = Channel.from(strainFile.collect { it.tokenize( '\t' ) })
 
 process setup_dirs {
 
     executor 'local'
 
     input:
-        file strain_set_file
+        file 'SM_sample_sheet.tsv' from Channel.fromPath("SM_sample_sheet.tsv")
 
     """
         mkdir -p ${analysis_dir}
-        cp ${strain_set_file} ${analysis_dir}/isotype_set.json
+        cp SM_sample_sheet.tsv ${analysis_dir}/SM_sample_sheet.tsv
     """
 }
 
 /*
-    Alignment
+    Fastq alignment
 */
 process perform_alignment {
 
     cpus alignment_cores
 
-    tag { fq_pair_id }
+    tag { ID }
 
     input:
-        set SM, RG, fq1, fq2, fq_pair_id from strain_set
+        set SM, ID, LB, fq1, fq2, seq_folder from fqs
     output:
-        set val(SM), file("${fq_pair_id}.bam"), file("${fq_pair_id}.bam.bai") into fq_bam_set
+        set val(ID), file("${ID}.bam"), file("${ID}.bam.bai") into fq_bam_set
 
     
     """
-        bwa mem -t ${alignment_cores} -R '${RG}' ${reference} ${fq1} ${fq2} | \\
+        bwa mem -t ${alignment_cores} -R '@RG\tID:${ID}\tLB:${LB}\tSM:${SM}' ${reference} ${fq1} ${fq2} | \\
         sambamba view --nthreads=${alignment_cores} --sam-input --format=bam --with-header /dev/stdin | \\
-        sambamba sort --nthreads=${alignment_cores} --show-progress --tmpdir=${tmpdir} --out=${fq_pair_id}.bam /dev/stdin
-        sambamba index --nthreads=${alignment_cores} ${fq_pair_id}.bam
+        sambamba sort --nthreads=${alignment_cores} --show-progress --tmpdir=${tmpdir} --out=${ID}.bam /dev/stdin
+        sambamba index --nthreads=${alignment_cores} ${ID}.bam
     """
 }
+
 
 /* 
   Merge - Generate SM Bam
