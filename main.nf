@@ -54,7 +54,7 @@ process perform_alignment {
     input:
         set SM, ID, LB, fq1, fq2, seq_folder from fqs
     output:
-        set val(ID), file("${ID}.bam"), file("${ID}.bam.bai") into fq_bam_set
+        set val(SM), file("${ID}.bam"), file("${ID}.bam.bai") into fq_bam_set
 
     
     """
@@ -73,8 +73,6 @@ process perform_alignment {
 process merge_bam {
 
     cpus alignment_cores
-
-    publishDir SM_alignments_dir + "/WI/isotype", mode: 'copy', pattern: '*.bam*'
 
     tag { SM }
 
@@ -102,12 +100,27 @@ process merge_bam {
 }
 
 SM_bam_set.into { 
+                  bam_publish;
                   bam_idxstats; 
                   bam_stats;
                   bam_coverage;
                   bam_snp_individual;
                   bam_snp_union;
                   bam_telseq;
+}
+
+process bam_publish {
+
+    publishDir SM_alignments_dir + "/WI/isotype", mode: 'copy', pattern: '*.bam*'
+
+    input:
+        set val(SM), file("${SM}.bam"), file("${SM}.bam.bai") from bam_publish
+    output:
+        set file("${SM}.bam"), file("${SM}.bam.bai")
+
+    """
+        echo "Great!"
+    """
 }
 
 process SM_idx_stats {
@@ -394,7 +407,7 @@ process merge_union_vcf_chromosome {
         file("${chrom}.merged.raw.vcf.gz") into raw_vcf
 
     """
-        bcftools merge --threads ${alignment_cores} --regions ${chrom} -O z -m all --file-list ${union_vcfs} > ${chrom}.merged.raw.vcf.gz
+        bcftools merge --regions ${chrom} -O z -m all --file-list ${union_vcfs} > ${chrom}.merged.raw.vcf.gz
         bcftools index ${chrom}.merged.raw.vcf.gz
     """
 }
