@@ -39,6 +39,7 @@ process setup_dirs {
     """
         mkdir -p ${analysis_dir}
         cp SM_sample_sheet.tsv ${analysis_dir}/SM_sample_sheet.tsv
+        gsutil cp SM_sample_sheet.tsv gs://elegansvariation.org/releases/${date}/
     """
 }
 
