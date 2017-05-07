@@ -736,6 +736,7 @@ process final_vcf {
         vcfanno -p ${alignment_cores} vcf_anno.conf snpeff.vcf.gz | bcftools view -O z > WI.${date}.vcf.gz
         bcftools index WI.${date}.vcf.gz
         tabix WI.${date}.vcf.gz
+        gsutil cp WI.${date}.vcf.gz WI.${date}.vcf.gz.csi WI.${date}.vcf.gz.tbi gs://elegansvariation.org/releases/${date}/
     """
 
 }
@@ -750,15 +751,13 @@ process generate_tsv {
     output:
         file("WI.${cdate}.tsv.gz")
 
-    script:
-        cdate = date.replace("-","")
     """
         echo ${contig_list.join(" ")} | tr ' ' '\\n' | xargs --verbose -I {} -P ${variant_cores} sh -c "bcftools query --regions {} -f '[%CHROM\\t%POS\\t%SAMPLE\\t%REF\\t%ALT\\t%FILTER\\t%FT\\t%GT\n]' WI.${date}.vcf.gz > {}.tsv"
         order=`echo ${contig_list.join(" ")} | tr ' ' '\\n' | awk '{ print \$1 ".tsv" }'`
 
-        cat <(echo 'CHROM\tPOS\tSAMPLE\tREF\tALT\tFILTER\tFT\tGT') \${order} > WI.${cdate}.tsv
-        gzip WI.${cdate}.tsv
-        gsutil cp WI.${cdate}.tsv.gz gs://elegansvariation.org/releases/${cdate}/
+        cat <(echo 'CHROM\tPOS\tSAMPLE\tREF\tALT\tFILTER\tFT\tGT') \${order} > WI.${date}.tsv
+        gzip WI.${date}.tsv
+        gsutil cp WI.${date}.tsv.gz gs://elegansvariation.org/releases/${date}/
     """
 }
 
