@@ -750,7 +750,7 @@ process generate_tsv {
         set file("WI.${date}.vcf.gz"), file("WI.${date}.vcf.gz.csi"), file("WI.${date}.vcf.gz.tbi") from final_vcf
 
     output:
-        file("WI.${cdate}.tsv.gz")
+        file("WI.${date}.tsv.gz") into bq_tsv
 
     """
         echo ${contig_list.join(" ")} | tr ' ' '\\n' | xargs --verbose -I {} -P ${variant_cores} sh -c "bcftools query --regions {} -f '[%CHROM\\t%POS\\t%SAMPLE\\t%REF\\t%ALT\\t%FILTER\\t%FT\\t%GT\n]' WI.${date}.vcf.gz > {}.tsv"
@@ -762,3 +762,26 @@ process generate_tsv {
     """
 }
 
+process upload_bq {
+
+    input:
+        file("WI.${date}.tsv.gz") from bq_tsv
+
+    """
+        # Only load if its not been done before
+        if [[ \$(bq ls WI | grep $date) -eq 0 ]]
+        then
+            bq load --field_delimiter "\\t" \
+            --skip_leading_rows 1 \
+            --ignore_unknown_values \
+            andersen-lab:WI.${date}  \
+            gs://elegansvariation.org/releases/${date}/WI.${date}.tsv.gz \
+            CHROM:STRING,POS:INTEGER,SAMPLE:STRING,REF:STRING,ALT:STRING,FILTER:STRING,FT:STRING,GT:STRING
+        fi
+
+        # Set ACL to public
+        gsutil -m acl set -R -a public-read gs://elegansvariation.org
+
+    """
+
+}
