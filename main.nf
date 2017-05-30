@@ -718,6 +718,7 @@ process wig_to_bed {
 
 }
 
+
 process final_vcf {
 
     publishDir analysis_dir + "/vcf", mode: 'copy'
@@ -732,6 +733,9 @@ process final_vcf {
 
     output:
         set file("WI.${date}.vcf.gz"), file("WI.${date}.vcf.gz.csi"), file("WI.${date}.vcf.gz.tbi") into final_vcf
+        set file("WI.${date}.vcf.gz"), file("WI.${date}.vcf.gz.csi"), file("WI.${date}.vcf.gz.tbi") into final_vcf_strain
+        set file("WI.${date}.vcf.gz"), file("WI.${date}.vcf.gz.csi"), file("WI.${date}.vcf.gz.tbi") into final_vcf_isotype_list
+        set file("WI.${date}.vcf.gz"), file("WI.${date}.vcf.gz.csi"), file("WI.${date}.vcf.gz.tbi") into final_vcf_mod_tracks
 
     """
         vcfanno -p ${alignment_cores} vcf_anno.conf snpeff.vcf.gz | bcftools view -O z > WI.${date}.vcf.gz
@@ -741,6 +745,69 @@ process final_vcf {
     """
 
 }
+
+mod_tracks = Channel.from(["LOW", "MODERATE", "HIGH", "MODIFIER"])
+final_vcf_mod_tracks.spread(mod_tracks).into { mod_track_set }
+
+
+process generate_mod_tracks {
+
+    publishDir analysis_dir + 'tracks', mode: 'copy'
+
+    tag { severity }
+
+    input:
+        set file("WI.${date}.vcf.gz"), file("WI.${date}.vcf.gz.csi"), file("WI.${date}.vcf.gz.tbi"), val(severity) from mod_track_set
+    output:
+        set file("${date}.${severity}.bed"), file("${date}.${severity}.bed.idx")
+
+    """
+    bcftools view --apply-filters PASS WI.${date}.vcf.gz | \
+    grep ${severity} | \
+    awk '\$0 !~ "^#" { print \$1 "\\t" (\$2 - 1) "\\t" (\$2)  "\\t" \$1 ":" \$2 "\\t0\\t+"  "\\t" \$2 - 1 "\\t" \$2 "\\t0\\t1\\t1\\t0" }'  > ${date}.${severity}.bed && sleep 3 && igvtools index ${date}.${severity}.bed
+    gsutil cp ${date}.${severity}.bed gs://elegansvariation.org/releases/${date}/tracks/severity/
+    gsutil cp ${date}.${severity}.bed.idx gs://elegansvariation.org/releases/${date}/tracks/severity/
+    """
+}
+
+process generate_strain_list {
+
+    executor 'local'
+
+    input:
+        set file("WI.${date}.vcf.gz"), file("WI.${date}.vcf.gz.csi"), file("WI.${date}.vcf.gz.tbi") from final_vcf_isotype_list
+
+    output:
+        file('isotype_list.tsv') into isotype_list
+
+    """
+        bcftools query -l WI.${date}.vcf.gz > isotype_list.tsv
+    """
+
+}
+
+
+isotype_list.splitText() { it.strip() } .spread(final_vcf_strain).into { isotype_set }
+
+process generate_strain_vcf {
+
+    publishDir analysis_dir + 'tracks', mode: 'copy'
+
+    tag { isotype }
+
+    input:
+        set val(isotype), file("WI.${date}.vcf.gz"), file("WI.${date}.vcf.gz.csi"), file("WI.${date}.vcf.gz.tbi") from isotype_set
+
+    output:
+        file("${strain}.${date}.vcf.gz")
+
+    """
+    bcftools view -O z --samples ${isotype} --genotype ^miss -O z > ${isotype}.{date}.vcf.gz && tabix index ${isotype}.{date}.vcf.gz
+    gsutil cp ${date}.${isotype}.bed.idx gs://elegansvariation.org/releases/${date}/tracks/isotype/
+    """
+
+}
+
 
 process generate_tsv {
 
