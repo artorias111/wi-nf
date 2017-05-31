@@ -702,7 +702,7 @@ phastcons.mix(phylop).into { wig }
 
 process wig_to_bed {
 
-    publishDir 'tracks', mode: 'copy'
+    publishDir analysis_dir + '/tracks', mode: 'copy'
 
     input:
         set val(track_name), file("track.wib") from wig
@@ -752,7 +752,7 @@ final_vcf_mod_tracks.spread(mod_tracks).into { mod_track_set }
 
 process generate_mod_tracks {
 
-    publishDir analysis_dir + 'tracks', mode: 'copy'
+    publishDir analysis_dir + '/tracks/severity', mode: 'copy'
 
     tag { severity }
 
@@ -791,7 +791,7 @@ isotype_list.splitText() { it.strip() } .spread(final_vcf_strain).into { isotype
 
 process generate_strain_vcf {
 
-    publishDir analysis_dir + 'tracks', mode: 'copy'
+    publishDir analysis_dir + '/tracks/isotype', mode: 'copy'
 
     tag { isotype }
 
@@ -799,15 +799,13 @@ process generate_strain_vcf {
         set val(isotype), file("WI.${date}.vcf.gz"), file("WI.${date}.vcf.gz.csi"), file("WI.${date}.vcf.gz.tbi") from isotype_set
 
     output:
-        file("${strain}.${date}.vcf.gz")
+        set file("${isotype}.${date}.vcf.gz"), file("${isotype}.${date}.vcf.gz.tbi") into isotype_ind_vcf
 
     """
-    bcftools view -O z --samples ${isotype} --genotype ^miss -O z > ${isotype}.{date}.vcf.gz && tabix index ${isotype}.{date}.vcf.gz
-    gsutil cp ${date}.${isotype}.bed.idx gs://elegansvariation.org/releases/${date}/tracks/isotype/
+    bcftools view -O z --samples ${isotype} WI.${date}.vcf.gz > ${isotype}.${date}.vcf.gz && tabix ${isotype}.${date}.vcf.gz
     """
 
 }
-
 
 process generate_tsv {
 
