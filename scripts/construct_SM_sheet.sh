@@ -166,6 +166,16 @@ awk  -F  "-" -v prefix=${prefix} -v seq_folder=${seq_folder} '{
 }' >> ${fq_sheet}
 
 
+#===========================================================#
+# MAF-JU1249-20170425 - Single Strain from Marie Anne Felix #
+#===========================================================#
+
+seq_folder=MAF-JU1249-20170425 
+prefix=/projects/b1059/data/fastq/WI/dna/processed/${seq_folder}
+
+echo -e "JU1249\tMAF-JU1259-20170425\tMAF-JU1259-20170425\t${prefix}/JU1249_1P.fq.gz\t${prefix}/JU1249_2P.fq.gz\t${seq_folder}" >> ${fq_sheet}
+
+
 #===================================#
 # Convert Strains to Isotypes; out  #
 #===================================#
