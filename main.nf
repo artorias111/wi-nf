@@ -108,6 +108,7 @@ SM_bam_set.into {
                   bam_snp_individual;
                   bam_snp_union;
                   bam_telseq;
+                  bam_to_cram
 }
 
 process bam_publish {
@@ -121,6 +122,23 @@ process bam_publish {
 
     """
         echo "Great!"
+    """
+}
+
+process convert_to_cram {
+
+    tag { SM }
+
+    publishDir SM_alignments_dir + "/WI/isotype_cram", mode: 'copy', pattern: '*.cram*'
+
+    input:
+        set val(SM), file("${SM}.bam"), file("${SM}.bam.bai") from bam_to_cram
+    output:
+        set file("${SM}.cram"), file("${SM}.cram.crai")
+
+    """
+        sambamba view --nthreads=${alignment_cores} --format=cram --ref-filename==${reference} ${SM}.bam > ${SM}.cram
+        sambamba index ${SM}.cram
     """
 }
 
@@ -269,7 +287,7 @@ process call_telseq {
 
 process combine_telseq {
 
-    publishDir analysis_dir + "/SM"
+    publishDir analysis_dir + "/SM", mode: 'copy'
 
     input:
         file("telseq?.txt") from telseq_results.toSortedList()
@@ -279,7 +297,7 @@ process combine_telseq {
 
     """
         telseq -h > telseq.tsv
-        cat telseq.tsv | awk 'NR == 1 { print "isotype\t" \$0; next } \$0 ~ "\\[" { gsub("\\[|\\]|\\.bam", "", \$0); iso = \$0 } \$0 !~ "\\[|^1" && \$1 != iso { print iso "\t" \$0}' >> telseq.tsv
+        cat telseq*.tsv >> telseq.tsv
     """
 }
 
@@ -466,6 +484,8 @@ process filter_merged_vcf {
 filtered_vcf.into { filtered_vcf_snpeff; filtered_vcf_to_clean; filtered_vcf_gtcheck; filtered_vcf_phylo }
 
 fix_snpeff_script = file("fix_snpeff_names.py")
+/* temp fix */
+gene_pkl = Channel.fromPath("gene.pkl")
 
 process annotate_vcf_snpeff {
 
@@ -473,18 +493,18 @@ process annotate_vcf_snpeff {
 
     input:
         set file("merged.filtered.vcf.gz"), file("merged.filtered.vcf.gz.csi") from filtered_vcf_snpeff
+        file("gene.pkl") from gene_pkl
 
     output:
-        set file("snpeff.vcf.gz"), file("snpeff.vcf.gz.csi") into snpeff_vcf
+        set file("WI.${date}.snpeff.vcf.gz"), file("WI.${date}.snpeff.vcf.gz.csi") into snpeff_vcf
 
     """
-        # Download Gene names first; Then Fix
-        python ${fix_snpeff_script}
         bcftools view -O v merged.filtered.vcf.gz | \\
         snpEff eff -noInteraction -no-downstream -no-intergenic -no-upstream ${annotation_reference} | \\
+        bcftools view -O v | \\
         python ${fix_snpeff_script} - | \\
-        bcftools view -O z > snpeff.vcf.gz
-        bcftools index snpeff.vcf.gz
+        bcftools view -O z > WI.${date}.snpeff.vcf.gz
+        bcftools index WI.${date}.snpeff.vcf.gz
     """
 
 }
@@ -498,9 +518,9 @@ process generate_clean_vcf {
         set file("filtered.vcf.gz"), file("filtered.vcf.gz.csi") from filtered_vcf_to_clean
 
     output:
-        set file("clean.vcf.gz"), file("clean.vcf.gz.csi") into clean_vcf_to_impute
-        set file("clean.vcf.gz"), file("clean.vcf.gz.csi") into clean_vcf_to_upload
-        set val('clean'), file("clean.vcf.gz"), file("clean.vcf.gz.csi") into clean_vcf_stat
+        set file("WI.${date}.clean.vcf.gz"), file("WI.${date}.clean.vcf.gz.csi") into clean_vcf_to_impute
+        set file("WI.${date}.clean.vcf.gz"), file("WI.${date}.clean.vcf.gz.csi") into clean_vcf_to_upload
+        set val('clean'), file("WI.${date}.clean.vcf.gz"), file("WI.${date}.clean.vcf.gz.csi") into clean_vcf_stat
 
     """
         # Generate clean vcf
@@ -510,8 +530,8 @@ process generate_clean_vcf {
         vk filter HET --max=0.10 - | \\
         vk filter REF --min=1 - | \\
         vk filter ALT --min=1 - | \\
-        bcftools view -O z > clean.vcf.gz
-        bcftools index -f clean.vcf.gz
+        bcftools view -O z > WI.${date}.clean.vcf.gz
+        bcftools index -f WI.${date}.clean.vcf.gz
     """
 }
 
@@ -536,12 +556,12 @@ process imputation {
     input:
         set file("filtered.vcf.gz"), file("filtered.vcf.gz.csi") from clean_vcf_to_impute 
     output:
-        set file("impute.vcf.gz"), file("impute.vcf.gz.csi") into impute_vcf
-        set val('impute'), file("impute.vcf.gz"), file("impute.vcf.gz.csi") into impute_vcf_stat
+        set file("WI.${date}.impute.vcf.gz"), file("WI.${date}.impute.vcf.gz.csi") into impute_vcf
+        set val('impute'), file("WI.${date}.impute.vcf.gz"), file("WI.${date}.impute.vcf.gz.csi") into impute_vcf_stat
 
     """
-        java -jar ${beagle_location} nthreads=${variant_cores} window=8000 overlap=3000 impute=true ne=17500 gt=filtered.vcf.gz out=impute
-        bcftools index -f impute.vcf.gz
+        java -jar ${beagle_location} nthreads=${variant_cores} window=8000 overlap=3000 impute=true ne=17500 gt=filtered.vcf.gz out=WI.${date}.impute
+        bcftools index -f WI.${date}.impute.vcf.gz
     """
 }
 
@@ -553,12 +573,13 @@ process make_kinship {
     publishDir analysis_dir + "/cegwas", mode: 'copy'
 
     input:
-        set file("impute.vcf.gz"), file("impute.vcf.gz.csi") from kinship_vcf
+        set file("WI.${date}.impute.vcf.gz"), file("WI.${date}.impute.vcf.gz.csi") from kinship_vcf
     output:
         file("kinship.Rda")
 
     """
-        Rscript -e 'library(cegwas); kinship <- generate_kinship("impute.vcf.gz"); save(kinship, file = "kinship.Rda");'
+        Rscript -e 'library(cegwas); kinship <- generate_kinship("WI.${date}.impute.vcf.gz"); save(kinship, file = "kinship.Rda");'
+        gsutil cp kinship.Rda gs://elegansvariation.org/releases/${date}/cegwas/kinship.Rda
     """
 
 }
@@ -568,12 +589,13 @@ process make_mapping {
     publishDir analysis_dir + "/cegwas", mode: 'copy'
 
     input:
-        set file("impute.vcf.gz"), file("impute.vcf.gz.csi") from mapping_vcf
+        set file("WI.${date}.impute.vcf.gz"), file("WI.${date}.impute.vcf.gz.csi") from mapping_vcf
     output:
         file("snps.Rda")
 
     """
-        Rscript -e 'library(cegwas); snps <- generate_mapping("impute.vcf.gz"); save(snps, file = "snps.Rda");'
+        Rscript -e 'library(cegwas); snps <- generate_mapping("WI.${date}.impute.vcf.gz"); save(snps, file = "snps.Rda");'
+        gsutil cp snps.Rda gs://elegansvariation.org/releases/${date}/cegwas/snps.Rda
     """
 
 }
@@ -582,11 +604,11 @@ process make_mapping {
 process upload_impute_vcf {
 
     input:
-        set file("impute.vcf.gz"), file("impute.vcf.gz.csi") from upload_impute
+        set file("WI.${date}.impute.vcf.gz"), file("WI.${date}.impute.vcf.gz.csi") from upload_impute
 
     """
-    gsutil cp "impute.vcf.gz" gs://elegansvariation.org/releases/${date}/WI.${date}.impute.vcf.gz
-    gsutil cp "impute.vcf.gz.csi" gs://elegansvariation.org/releases/${date}/WI.${date}.impute.vcf.gz.csi
+    gsutil cp WI.${date}.impute.vcf.gz gs://elegansvariation.org/releases/${date}/WI.${date}.impute.vcf.gz
+    gsutil cp WI.${date}.impute.vcf.gz.csi gs://elegansvariation.org/releases/${date}/WI.${date}.impute.vcf.gz.csi
     """
 }
 
@@ -615,6 +637,10 @@ process calculate_gtcheck {
 
 vcf_stat_set = filtered_vcf_stat.concat( clean_vcf_stat, impute_vcf_stat)
 
+/*
+    Stat IMPUTE and CLEAN Here; Final VCF stat'd below
+*/
+
 process stat_tsv {
 
     tag { vcf_stat }
@@ -625,10 +651,11 @@ process stat_tsv {
         set val(vcf_stat), file("${vcf_stat}.vcf.gz"), file("${vcf_stat}.vcf.gz.csi") from vcf_stat_set
 
     output:
-        file("${vcf_stat}.stats.txt") into filtered_stats
+        file("WI.${date}.${vcf_stat}.stats.txt") into filtered_stats
 
     """
-        bcftools stats --verbose ${vcf_stat}.vcf.gz > ${vcf_stat}.stats.txt
+        bcftools stats --verbose ${vcf_stat}.vcf.gz > WI.${date}.${vcf_stat}.stats.txt
+        gsutil cp WI.${date}.${vcf_stat}.stats.txt gs://elegansvariation.org/releases/${date}/WI.${date}.${vcf_stat}.stats.txt
     """
 
 }
@@ -756,24 +783,38 @@ process final_vcf {
     cpus alignment_cores
 
     input:
-        set file('snpeff.vcf.gz'), file('snpeff.vcf.gz.csi') from snpeff_vcf
+        set file("WI.${date}.snpeff.vcf.gz"), file("WI.${date}.snpeff.vcf.gz.csi") from snpeff_vcf
         file(track) from bed_tracks.toSortedList()
         file(track) from bed_indices.toSortedList()
         file('vcf_anno.conf') from Channel.fromPath("vcfanno.conf")
 
     output:
         set file("WI.${date}.vcf.gz"), file("WI.${date}.vcf.gz.csi"), file("WI.${date}.vcf.gz.tbi") into final_vcf
-        set file("WI.${date}.vcf.gz"), file("WI.${date}.vcf.gz.csi"), file("WI.${date}.vcf.gz.tbi") into final_vcf_strain
-        set file("WI.${date}.vcf.gz"), file("WI.${date}.vcf.gz.csi"), file("WI.${date}.vcf.gz.tbi") into final_vcf_isotype_list
-        set file("WI.${date}.vcf.gz"), file("WI.${date}.vcf.gz.csi"), file("WI.${date}.vcf.gz.tbi") into final_vcf_mod_tracks
 
     """
-        vcfanno -p ${alignment_cores} vcf_anno.conf snpeff.vcf.gz | bcftools view -O z > WI.${date}.vcf.gz
+        vcfanno -p ${alignment_cores} vcf_anno.conf WI.${date}.snpeff.vcf.gz | bcftools view -O z > WI.${date}.vcf.gz
         bcftools index WI.${date}.vcf.gz
         tabix WI.${date}.vcf.gz
-        gsutil cp WI.${date}.vcf.gz WI.${date}.vcf.gz.csi WI.${date}.vcf.gz.tbi gs://elegansvariation.org/releases/${date}/
+        gsutil cp WI.${date}.vcf.gz WI.${date}.vcf.gz.csi WI.${date}.vcf.gz.tbi gs://elegansvariation.org/releases/${date}/WI.${date}.vcf.gz
     """
 
+}
+
+final_vcf.into { final_vcf_strain; final_vcf_isotype_list; final_vcf_mod_tracks; final_vcf_gtcheck; final_vcf_tsv }
+
+process final_vcf_stat {
+
+    publishDir  analysis_dir + "/vcf", mode: 'copy'
+
+    input:
+        set file("WI.${date}.vcf.gz"), file("WI.${date}.vcf.gz.csi"), file("WI.${date}.vcf.gz.tbi") from final_vcf_gtcheck
+    output:
+        file("WI.${date}.stats.txt")
+
+    """
+        bcftools stats --verbose WI.${date}.vcf.gz > WI.${date}.stats.txt
+        gsutil cp WI.${date}.stats.txt gs://elegansvariation.org/releases/${date}/WI.${date}.stats.txt
+    """
 }
 
 mod_tracks = Channel.from(["LOW", "MODERATE", "HIGH", "MODIFIER"])
@@ -817,33 +858,44 @@ process generate_strain_list {
 }
 
 
-isotype_list.splitText() { it.strip() } .spread(final_vcf_strain).into { isotype_set }
+isotype_list.splitText() { it.strip() } .spread(final_vcf_strain).into { isotype_set_vcf; isotype_set_tsv }
 
-process generate_strain_vcf {
+
+process generate_isotype_vcf {
 
     publishDir analysis_dir + '/tracks/isotype', mode: 'copy'
 
     tag { isotype }
 
     input:
-        set val(isotype), file("WI.${date}.vcf.gz"), file("WI.${date}.vcf.gz.csi"), file("WI.${date}.vcf.gz.tbi") from isotype_set
+        set val(isotype), file("WI.${date}.vcf.gz"), file("WI.${date}.vcf.gz.csi"), file("WI.${date}.vcf.gz.tbi") from isotype_set_vcf
 
     output:
         set val(isotype), file("${isotype}.${date}.vcf.gz"), file("${isotype}.${date}.vcf.gz.tbi") into isotype_ind_vcf
 
     """
     bcftools view -O z --samples ${isotype} WI.${date}.vcf.gz > ${isotype}.${date}.vcf.gz && tabix ${isotype}.${date}.vcf.gz
+    gsutil cp ${isotype}.${date}.vcf.gz ${isotype}.${date}.vcf.gz.tbi gs://elegansvariation.org/releases/${date}/tracks/isotype/
     """
 
 }
 
-process upload_strain_vcf {
+
+process generate_isotype_tsv {
+
+    publishDir analysis_dir + '/isotype_tsv', mode: 'copy'
+
+    tag { isotype }
 
     input:
-        set val(isotype), file("${isotype}.${date}.vcf.gz"), file("${isotype}.${date}.vcf.gz.tbi") from isotype_ind_vcf
+        set val(isotype), file("WI.${date}.vcf.gz"), file("WI.${date}.vcf.gz.csi"), file("WI.${date}.vcf.gz.tbi") from isotype_set_tsv
+
+    output:
+        set val(isotype), file("${isotype}.${date}.tsv")
 
     """
-    gsutil cp ${isotype}.${date}.vcf.gz ${isotype}.${date}.vcf.gz.tbi gs://elegansvariation.org/releases/${date}/tracks/isotype/
+    bcftools query '[%CHROM\t%POS\t%REF\t%ALT\t%TGT]\n' -O z --samples ${isotype} WI.${date}.vcf.gz > ${isotype}.${date}.tsv
+    gsutil cp ${isotype}.${date}.tsv gs://elegansvariation.org/releases/${date}/isotype_tsv/
     """
 
 }
@@ -854,7 +906,7 @@ process generate_tsv {
     publishDir analysis_dir + "/tsv", mode: 'copy'
 
     input:
-        set file("WI.${date}.vcf.gz"), file("WI.${date}.vcf.gz.csi"), file("WI.${date}.vcf.gz.tbi") from final_vcf
+        set file("WI.${date}.vcf.gz"), file("WI.${date}.vcf.gz.csi"), file("WI.${date}.vcf.gz.tbi") from final_vcf_tsv
 
     output:
         file("WI.${date}.tsv.gz") into bq_tsv
@@ -868,6 +920,7 @@ process generate_tsv {
         gsutil cp WI.${date}.tsv.gz gs://elegansvariation.org/releases/${date}/
     """
 }
+
 
 process upload_bq {
 
@@ -886,9 +939,8 @@ process upload_bq {
             CHROM:STRING,POS:INTEGER,SAMPLE:STRING,REF:STRING,ALT:STRING,FILTER:STRING,FT:STRING,GT:STRING
         fi
 
-        # Set ACL to public
-        gsutil -m acl set -R -a public-read gs://elegansvariation.org
 
     """
-
 }
+
+
