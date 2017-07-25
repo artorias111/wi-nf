@@ -472,7 +472,6 @@ process filter_merged_vcf {
 
     """
         bcftools view merged.raw.vcf.gz | \\
-        bcftools view -m2 -M2 | \\
         vk filter MISSING --max=0.90 --soft-filter="high_missing" --mode=x - | \
         vk filter HET --max=0.10 --soft-filter="high_heterozygosity" --mode=+ - | \
         vk filter ALT --max=0.99 - | \
