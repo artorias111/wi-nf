@@ -137,8 +137,8 @@ process convert_to_cram {
         set file("${SM}.cram"), file("${SM}.cram.crai")
 
     """
-        sambamba view --nthreads=${alignment_cores} --format=cram --ref-filename==${reference} ${SM}.bam > ${SM}.cram
-        sambamba index ${SM}.cram
+        sambamba view --nthreads=${alignment_cores} --format=cram --ref-filename=${reference} --output-filename ${SM}.cram ${SM}.bam 
+        sambamba index --cram-input ${SM}.cram
     """
 }
 
@@ -287,18 +287,20 @@ process call_telseq {
 
 process combine_telseq {
 
+    executor 'local'
+
     publishDir analysis_dir + "/SM", mode: 'copy'
 
     input:
-        file("telseq?.txt") from telseq_results.toSortedList()
+        file("ind_telseq?.txt") from telseq_results.toSortedList()
 
     output:
         file("telseq.tsv")
 
-    """
+    '''
         telseq -h > telseq.tsv
-        cat telseq*.tsv >> telseq.tsv
-    """
+        cat ind_telseq*.txt | egrep -v '\\[|BAMs' >> telseq.tsv
+    '''
 }
 
 /*
@@ -465,23 +467,25 @@ process filter_merged_vcf {
         set file("merged.raw.vcf.gz"), file("merged.raw.vcf.gz.csi") from raw_vcf_concatenated
 
     output:
-        set file("filtered.vcf.gz"), file("filtered.vcf.gz.csi") into filtered_vcf
-        set val('filtered'), file("filtered.vcf.gz"), file("filtered.vcf.gz.csi") into filtered_vcf_stat
+        set file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi") into filtered_vcf
+        set val('filtered'), file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi") into filtered_vcf_stat
 
     """
         bcftools view merged.raw.vcf.gz | \\
+        bcftools view -m2 -M2 | \\
         vk filter MISSING --max=0.90 --soft-filter="high_missing" --mode=x - | \
         vk filter HET --max=0.10 --soft-filter="high_heterozygosity" --mode=+ - | \
         vk filter ALT --max=0.99 - | \
         vk filter REF --min=1 - | \
         vk filter ALT --min=1 - | \
         vcffixup - | \\
-        bcftools view -O z - > filtered.vcf.gz
-        bcftools index -f filtered.vcf.gz
+        bcftools view -O z - > WI.${date}.soft-filter.vcf.gz
+        bcftools index -f WI.${date}.soft-filter.vcf.gz
+        bcftools stats --verbose WI.${date}.soft-filter.vcf.gz > WI.${date}.soft-filter.stats.txt
     """
 }
 
-filtered_vcf.into { filtered_vcf_snpeff; filtered_vcf_to_clean; filtered_vcf_gtcheck; filtered_vcf_phylo }
+filtered_vcf.into { filtered_vcf_snpeff; filtered_vcf_to_clean; filtered_vcf_gtcheck }
 
 fix_snpeff_script = file("fix_snpeff_names.py")
 /* temp fix */
@@ -492,19 +496,20 @@ process annotate_vcf_snpeff {
     publishDir analysis_dir + "/vcf", mode: 'copy'
 
     input:
-        set file("merged.filtered.vcf.gz"), file("merged.filtered.vcf.gz.csi") from filtered_vcf_snpeff
+        set file("merged.WI.${date}.soft-filter.vcf.gz"), file("merged.WI.${date}.soft-filter.vcf.gz.csi") from filtered_vcf_snpeff
         file("gene.pkl") from gene_pkl
 
     output:
         set file("WI.${date}.snpeff.vcf.gz"), file("WI.${date}.snpeff.vcf.gz.csi") into snpeff_vcf
 
     """
-        bcftools view -O v merged.filtered.vcf.gz | \\
+        bcftools view -O v merged.WI.${date}.soft-filter.vcf.gz | \\
         snpEff eff -noInteraction -no-downstream -no-intergenic -no-upstream ${annotation_reference} | \\
         bcftools view -O v | \\
         python ${fix_snpeff_script} - | \\
         bcftools view -O z > WI.${date}.snpeff.vcf.gz
         bcftools index WI.${date}.snpeff.vcf.gz
+        bcftools stats --verbose WI.${date}.snpeff.vcf.gz > WI.${date}.snpeff.stats.txt
     """
 
 }
@@ -515,35 +520,89 @@ process generate_clean_vcf {
     publishDir analysis_dir + "/vcf", mode: 'copy'
 
     input:
-        set file("filtered.vcf.gz"), file("filtered.vcf.gz.csi") from filtered_vcf_to_clean
+        set file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi") from filtered_vcf_to_clean
 
     output:
-        set file("WI.${date}.clean.vcf.gz"), file("WI.${date}.clean.vcf.gz.csi") into clean_vcf_to_impute
-        set file("WI.${date}.clean.vcf.gz"), file("WI.${date}.clean.vcf.gz.csi") into clean_vcf_to_upload
-        set val('clean'), file("WI.${date}.clean.vcf.gz"), file("WI.${date}.clean.vcf.gz.csi") into clean_vcf_stat
+        set file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") into clean_vcf_to_impute
+        set file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") into tajima_bed
+        set file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") into vcf_phylo
+        set val('clean'), file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") into clean_vcf_stat
 
     """
         # Generate clean vcf
-        bcftools view -m 2 -M 2 --types snps filtered.vcf.gz | \\
+        bcftools view -m 2 -M 2 --types snps WI.${date}.soft-filter.vcf.gz | \\
         bcftools filter --set-GTs . --exclude 'FORMAT/FT != "PASS"' | \\
         vk filter MISSING --max=0.90 - | \\
         vk filter HET --max=0.10 - | \\
         vk filter REF --min=1 - | \\
         vk filter ALT --min=1 - | \\
-        bcftools view -O z > WI.${date}.clean.vcf.gz
-        bcftools index -f WI.${date}.clean.vcf.gz
+        bcftools view -O z > WI.${date}.hard-filter.vcf.gz
+        bcftools index -f WI.${date}.hard-filter.vcf.gz
+        bcftools stats --verbose WI.${date}.hard-filter.vcf.gz > WI.${date}.hard-filter.stats.txt
     """
 }
 
-process upload_clean_vcf {
+
+/*
+    Phylo analysis
+*/
+process phylo_analysis {
+
+    publishDir analysis_dir + "/phylo", mode: "copy"
+
+    tag { contig }
 
     input:
-        set file("clean.vcf.gz"), file("clean.vcf.gz.csi") from clean_vcf_to_upload
+        set file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi"), val(contig) from vcf_phylo.spread(["I", "II", "III", "IV", "V", "X", "MtDNA", "genome"])
+
+    output:
+        set val(contig), file("${contig}.tree") into trees
 
     """
-        gsutil cp clean.vcf.gz gs://elegansvariation.org/releases/${date}/WI.${date}.clean.vcf.gz
-        gsutil cp clean.vcf.gz.csi gs://elegansvariation.org/releases/${date}/WI.${date}.clean.vcf.gz.csi
+        if [ "${contig}" == "genome" ]
+        then
+            vk phylo tree nj WI.${date}.hard-filter.vcf.gz > genome.tree
+        else
+            vk phylo tree nj WI.${date}.hard-filter.vcf.gz ${contig} > ${contig}.tree
+        fi
     """
+}
+
+trees_phylo = trees.spread(Channel.fromPath("process_trees.R"))
+
+process plot_trees {
+
+    publishDir analysis_dir + "/phylo", mode: "copy"
+
+    tag { contig }
+
+    input:
+        set val(contig), file("${contig}.tree"), file("process_trees.R") from trees_phylo
+
+    output:
+        file("${contig}.svg")
+        file("${contig}.png")
+
+    """
+    Rscript --vanilla process_trees.R ${contig}
+    """
+
+}
+
+process tajima_bed {
+
+    publishDir analysis_dir + "/tajima", mode: 'copy'
+
+    input:
+        set file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") from tajima_bed
+    output:
+        set file("WI.${date}.tajima.bed.gz"), file("WI.${date}.tajima.bed.gz.tbi")
+
+    """
+        tajima --no-header 100000 10000 WI.${date}.hard-filter.vcf.gz | bgzip > WI.${date}.tajima.bed.gz
+        tabix WI.${date}.tajima.bed.gz
+    """
+
 }
 
 
@@ -554,19 +613,20 @@ process imputation {
     cpus variant_cores
 
     input:
-        set file("filtered.vcf.gz"), file("filtered.vcf.gz.csi") from clean_vcf_to_impute 
+        set file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") from clean_vcf_to_impute 
     output:
         set file("WI.${date}.impute.vcf.gz"), file("WI.${date}.impute.vcf.gz.csi") into impute_vcf
         set val('impute'), file("WI.${date}.impute.vcf.gz"), file("WI.${date}.impute.vcf.gz.csi") into impute_vcf_stat
 
     """
-        java -jar ${beagle_location} nthreads=${variant_cores} window=8000 overlap=3000 impute=true ne=17500 gt=filtered.vcf.gz out=WI.${date}.impute
+        java -jar ${beagle_location} nthreads=${variant_cores} window=8000 overlap=3000 impute=true ne=17500 gt=WI.${date}.hard-filter.vcf.gz out=WI.${date}.impute
         bcftools index -f WI.${date}.impute.vcf.gz
+        bcftools stats --verbose WI.${date}.impute.vcf.gz > WI.${date}.impute.stats.txt
     """
 }
 
 
-impute_vcf.into { kinship_vcf;  mapping_vcf; upload_impute }
+impute_vcf.into { kinship_vcf;  mapping_vcf }
 
 process make_kinship {
 
@@ -598,18 +658,6 @@ process make_mapping {
         gsutil cp snps.Rda gs://elegansvariation.org/releases/${date}/cegwas/snps.Rda
     """
 
-}
-
-
-process upload_impute_vcf {
-
-    input:
-        set file("WI.${date}.impute.vcf.gz"), file("WI.${date}.impute.vcf.gz.csi") from upload_impute
-
-    """
-    gsutil cp WI.${date}.impute.vcf.gz gs://elegansvariation.org/releases/${date}/WI.${date}.impute.vcf.gz
-    gsutil cp WI.${date}.impute.vcf.gz.csi gs://elegansvariation.org/releases/${date}/WI.${date}.impute.vcf.gz.csi
-    """
 }
 
 
@@ -691,55 +739,6 @@ process process_concordance_results {
 
 }
 
-
-filtered_vcf_phylo_contig = filtered_vcf_phylo.spread(["I", "II", "III", "IV", "V", "X", "MtDNA", "genome"])
-
-/*
-    Phylo analysis
-*/
-process phylo_analysis {
-
-    publishDir analysis_dir + "/phylo", mode: "copy"
-
-    tag { contig }
-
-    input:
-        set file("merged.filtered.vcf.gz"), file("merged.filtered.vcf.gz.csi"), val(contig) from filtered_vcf_phylo_contig
-
-    output:
-        set val(contig), file("${contig}.tree") into trees
-
-    """
-        if [ "${contig}" == "genome" ]
-        then
-            vk phylo tree nj merged.filtered.vcf.gz > genome.tree
-        else
-            vk phylo tree nj merged.filtered.vcf.gz ${contig} > ${contig}.tree
-        fi
-    """
-}
-
-trees_phylo = trees.spread(Channel.fromPath("process_trees.R"))
-
-process plot_trees {
-
-    publishDir analysis_dir + "/phylo", mode: "copy"
-
-    tag { contig }
-
-    input:
-        set val(contig), file("${contig}.tree"), file("process_trees.R") from trees_phylo
-
-    output:
-        file("${contig}.svg")
-        file("${contig}.png")
-
-    """
-    Rscript --vanilla process_trees.R ${contig}
-    """
-
-}
-
 process download_annotation_files {
     executor 'local'
 
@@ -795,7 +794,6 @@ process final_vcf {
         vcfanno -p ${alignment_cores} vcf_anno.conf WI.${date}.snpeff.vcf.gz | bcftools view -O z > WI.${date}.vcf.gz
         bcftools index WI.${date}.vcf.gz
         tabix WI.${date}.vcf.gz
-        gsutil cp WI.${date}.vcf.gz WI.${date}.vcf.gz.csi WI.${date}.vcf.gz.tbi gs://elegansvariation.org/releases/${date}/WI.${date}.vcf.gz
     """
 
 }
@@ -807,13 +805,12 @@ process final_vcf_stat {
     publishDir  analysis_dir + "/vcf", mode: 'copy'
 
     input:
-        set file("WI.${date}.vcf.gz"), file("WI.${date}.vcf.gz.csi"), file("WI.${date}.vcf.gz.tbi") from final_vcf_gtcheck
+        set file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi"), file("WI.${date}.soft-filter.vcf.gz.tbi") from final_vcf_gtcheck
     output:
         file("WI.${date}.stats.txt")
 
     """
-        bcftools stats --verbose WI.${date}.vcf.gz > WI.${date}.stats.txt
-        gsutil cp WI.${date}.stats.txt gs://elegansvariation.org/releases/${date}/WI.${date}.stats.txt
+        bcftools stats --verbose WI.${date}.soft-filter.vcf.gz > WI.${date}.soft-filter.stats.txt
     """
 }
 
@@ -836,8 +833,6 @@ process generate_mod_tracks {
     bcftools view --apply-filters PASS WI.${date}.vcf.gz | \
     grep ${severity} | \
     awk '\$0 !~ "^#" { print \$1 "\\t" (\$2 - 1) "\\t" (\$2)  "\\t" \$1 ":" \$2 "\\t0\\t+"  "\\t" \$2 - 1 "\\t" \$2 "\\t0\\t1\\t1\\t0" }'  > ${date}.${severity}.bed && sleep 3 && igvtools index ${date}.${severity}.bed
-    gsutil cp ${date}.${severity}.bed gs://elegansvariation.org/releases/${date}/tracks/severity/
-    gsutil cp ${date}.${severity}.bed.idx gs://elegansvariation.org/releases/${date}/tracks/severity/
     """
 }
 
@@ -875,7 +870,6 @@ process generate_isotype_vcf {
 
     """
     bcftools view -O z --samples ${isotype} WI.${date}.vcf.gz > ${isotype}.${date}.vcf.gz && tabix ${isotype}.${date}.vcf.gz
-    gsutil cp ${isotype}.${date}.vcf.gz ${isotype}.${date}.vcf.gz.tbi gs://elegansvariation.org/releases/${date}/tracks/isotype/
     """
 
 }
@@ -894,7 +888,7 @@ process generate_isotype_tsv {
         set val(isotype), file("${isotype}.${date}.tsv")
 
     """
-    bcftools query '[%CHROM\t%POS\t%REF\t%ALT\t%TGT]\n' -O z --samples ${isotype} WI.${date}.vcf.gz > ${isotype}.${date}.tsv
+    bcftools query -f '[%CHROM\\t%POS\\t%REF\\t%ALT\\t%TGT]\\n' --samples ${isotype} WI.${date}.vcf.gz > ${isotype}.${date}.tsv
     gsutil cp ${isotype}.${date}.tsv gs://elegansvariation.org/releases/${date}/isotype_tsv/
     """
 
@@ -929,7 +923,7 @@ process upload_bq {
 
     """
         # Only load if its not been done before
-        if [[ \$(bq ls WI | grep $date) -eq 0 ]]
+        if [[ \$(bq ls WI | grep $date | wc -l ) -eq 0 ]]
         then
             bq load --field_delimiter "\\t" \
             --skip_leading_rows 1 \
