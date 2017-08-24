@@ -33,12 +33,14 @@ process setup_dirs {
 
     executor 'local'
 
+    publishDir "${analysis_dir}/"
+
     input:
         file 'SM_sample_sheet.tsv' from Channel.fromPath("SM_sample_sheet.tsv")
+    output:
+        file 'SM_sample_sheet.tsv'
 
     """
-        mkdir -p ${analysis_dir}
-        cp SM_sample_sheet.tsv ${analysis_dir}/SM_sample_sheet.tsv
         gsutil cp SM_sample_sheet.tsv gs://elegansvariation.org/releases/${date}/
     """
 }
@@ -387,6 +389,7 @@ process call_variants_union {
         bcftools filter -O u --threads ${variant_cores} --mode + --soft-filter min_depth --include "FORMAT/DP > ${min_depth}" | \\
         bcftools filter -O u --threads ${variant_cores} --mode + --soft-filter mapping_quality --include "INFO/MQ > ${mq}" | \\
         bcftools filter -O u --threads ${variant_cores} --mode + --soft-filter dv_dp --include "(FORMAT/AD[1])/(FORMAT/DP) >= ${dv_dp} || FORMAT/GT == '0/0'" | \\
+        bcftools filter -O u --threads ${variant_cores} --mode + --soft-filter multi --include "STRLEN(ALT) > 1 && (GT != '0/0' & GT != '0/1' & GT != '1/1')" | \\
         bcftools filter --mode + --soft-filter het --exclude 'AC==1' | \\
         vk geno transfer-filter - | \\
         bcftools view -O z > ${SM}.union.vcf.gz
@@ -528,8 +531,8 @@ process generate_clean_vcf {
         set val('clean'), file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") into clean_vcf_stat
 
     """
-        # Generate clean vcf
-        bcftools view -m 2 -M 2 --types snps WI.${date}.soft-filter.vcf.gz | \\
+        # Generate hard-filtered (clean) vcf
+        bcftools view --types snps WI.${date}.soft-filter.vcf.gz | \\
         bcftools filter --set-GTs . --exclude 'FORMAT/FT != "PASS"' | \\
         vk filter MISSING --max=0.90 - | \\
         vk filter HET --max=0.10 - | \\
