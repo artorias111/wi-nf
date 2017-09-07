@@ -517,7 +517,7 @@ process annotate_vcf_snpeff {
 }
 
 
-process generate_clean_vcf {
+process generate_hard_vcf {
 
     publishDir analysis_dir + "/vcf", mode: 'copy'
 
@@ -525,10 +525,10 @@ process generate_clean_vcf {
         set file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi") from filtered_vcf_to_clean
 
     output:
-        set file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") into clean_vcf_to_impute
+        set file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") into hard_vcf_to_impute
         set file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") into tajima_bed
         set file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") into vcf_phylo
-        set val('clean'), file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") into clean_vcf_stat
+        set val('clean'), file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") into hard_vcf
 
     """
         # Generate hard-filtered (clean) vcf
@@ -544,6 +544,36 @@ process generate_clean_vcf {
     """
 }
 
+hard_vcf.into { hard_vcf_stat; hard_vcf_summary }
+
+
+/*
+    Calculate Singletons
+*/
+
+process calculate_hard_vcf_summary {
+
+    publishDir analysis_dir + "/summary", mode: 'copy'
+
+    input:
+        set val('clean'), file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") from hard_vcf_summary
+
+    output:
+        file("WI.${date}.hard-filter.genotypes.tsv")
+        file("WI.${date}.hard-filter.genotypes.frequency.tsv")
+
+    """
+    # Calculate singleton freq
+    vk calc genotypes WI.${date}.hard-filter.vcf.gz > WI.${date}.hard-filter.genotypes.tsv
+    vk calc genotypes --frequency WI.${date}.hard-filter.vcf.gz > WI.${date}.hard-filter.genotypes.frequency.tsv
+
+    # Calculate average discordance; Determine most diverged strains
+    awk '$0 ~ "^CN" { print 1-($2/$3) "\t" $5 "\n" 1-($2/$3) "\t" $6 }' | \
+    sort -k 2 | \
+    datamash mean 1 --group 2 | \
+    sort -k2,2n > WI.${date}.hard-filter.avg_concordance.tsv
+    """
+}
 
 /*
     Phylo analysis
@@ -582,8 +612,9 @@ process plot_trees {
         set val(contig), file("${contig}.tree"), file("process_trees.R") from trees_phylo
 
     output:
-        file("${contig}.svg")
+        file("${contig}.pdf")
         file("${contig}.png")
+
 
     """
     Rscript --vanilla process_trees.R ${contig}
@@ -615,7 +646,7 @@ process imputation {
     cpus variant_cores
 
     input:
-        set file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") from clean_vcf_to_impute 
+        set file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") from hard_vcf_to_impute 
     output:
         set file("WI.${date}.impute.vcf.gz"), file("WI.${date}.impute.vcf.gz.csi") into impute_vcf
         set val('impute'), file("WI.${date}.impute.vcf.gz"), file("WI.${date}.impute.vcf.gz.csi") into impute_vcf_stat
@@ -684,8 +715,7 @@ process calculate_gtcheck {
     Stat VCFs
 */
 
-
-vcf_stat_set = filtered_vcf_stat.concat( clean_vcf_stat, impute_vcf_stat)
+vcf_stat_set = filtered_vcf_stat.concat( hard_vcf_stat, impute_vcf_stat)
 
 /*
     Stat IMPUTE and CLEAN Here; Final VCF stat'd below
@@ -705,7 +735,6 @@ process stat_tsv {
 
     """
         bcftools stats --verbose ${vcf_stat}.vcf.gz > WI.${date}.${vcf_stat}.stats.txt
-        gsutil cp WI.${date}.${vcf_stat}.stats.txt gs://elegansvariation.org/releases/${date}/WI.${date}.${vcf_stat}.stats.txt
     """
 
 }
