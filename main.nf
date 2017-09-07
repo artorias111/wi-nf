@@ -568,7 +568,7 @@ process calculate_hard_vcf_summary {
     vk calc genotypes --frequency WI.${date}.hard-filter.vcf.gz > WI.${date}.hard-filter.genotypes.frequency.tsv
 
     # Calculate average discordance; Determine most diverged strains
-    awk '$0 ~ "^CN" { print 1-($2/$3) "\t" $5 "\n" 1-($2/$3) "\t" $6 }' | \
+    awk '\$0 ~ "^CN" { print 1-(\$2/\$3) "\t" \$5 "\n" 1-(\$2/\$3) "\t" \$6 }' | \
     sort -k 2 | \
     datamash mean 1 --group 2 | \
     sort -k2,2n > WI.${date}.hard-filter.avg_concordance.tsv
