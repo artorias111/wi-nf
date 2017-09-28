@@ -538,6 +538,7 @@ process generate_hard_vcf {
         vk filter HET --max=0.10 - | \\
         vk filter REF --min=1 - | \\
         vk filter ALT --min=1 - | \\
+        vcffixup - | \\
         bcftools view -O z > WI.${date}.hard-filter.vcf.gz
         bcftools index -f WI.${date}.hard-filter.vcf.gz
         bcftools stats --verbose WI.${date}.hard-filter.vcf.gz > WI.${date}.hard-filter.stats.txt
