@@ -389,7 +389,7 @@ process call_variants_union {
         bcftools filter -O u --threads ${variant_cores} --mode + --soft-filter min_depth --include "FORMAT/DP > ${min_depth}" | \\
         bcftools filter -O u --threads ${variant_cores} --mode + --soft-filter mapping_quality --include "INFO/MQ > ${mq}" | \\
         bcftools filter -O u --threads ${variant_cores} --mode + --soft-filter dv_dp --include "(FORMAT/AD[1])/(FORMAT/DP) >= ${dv_dp} || FORMAT/GT == '0/0'" | \\
-        bcftools filter -O u --threads ${variant_cores} --mode + --soft-filter multi --include "STRLEN(ALT) > 1 && (GT != '0/0' & GT != '0/1' & GT != '1/1')" | \\
+        bcftools filter -O u --threads ${variant_cores} --mode + --soft-filter multi --include "GT != '0/0' && GT != '0/1' && GT != '1/1'" | \\
         bcftools filter --mode + --soft-filter het --exclude 'AC==1' | \\
         vk geno transfer-filter - | \\
         bcftools view -O z > ${SM}.union.vcf.gz
@@ -462,7 +462,7 @@ process concatenate_union_vcf {
     """
 }
 
-process filter_merged_vcf {
+process generate_soft_vcf {
 
     publishDir analysis_dir + "/vcf", mode: 'copy'
 
@@ -477,7 +477,6 @@ process filter_merged_vcf {
         bcftools view merged.raw.vcf.gz | \\
         vk filter MISSING --max=0.90 --soft-filter="high_missing" --mode=x - | \
         vk filter HET --max=0.10 --soft-filter="high_heterozygosity" --mode=+ - | \
-        vk filter ALT --max=0.99 - | \
         vk filter REF --min=1 - | \
         vk filter ALT --min=1 - | \
         vcffixup - | \\
@@ -545,7 +544,7 @@ process generate_hard_vcf {
     """
 }
 
-hard_vcf.into { hard_vcf_stat; hard_vcf_summary }
+hard_vcf.into { hard_vcf_summary }
 
 
 /*
@@ -716,7 +715,7 @@ process calculate_gtcheck {
     Stat VCFs
 */
 
-vcf_stat_set = filtered_vcf_stat.concat( hard_vcf_stat, impute_vcf_stat)
+vcf_stat_set = filtered_vcf_stat.concat( impute_vcf_stat)
 
 /*
     Stat IMPUTE and CLEAN Here; Final VCF stat'd below
