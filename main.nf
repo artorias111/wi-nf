@@ -389,7 +389,6 @@ process call_variants_union {
         bcftools filter -O u --threads ${variant_cores} --mode + --soft-filter min_depth --include "FORMAT/DP > ${min_depth}" | \\
         bcftools filter -O u --threads ${variant_cores} --mode + --soft-filter mapping_quality --include "INFO/MQ > ${mq}" | \\
         bcftools filter -O u --threads ${variant_cores} --mode + --soft-filter dv_dp --include "(FORMAT/AD[1])/(FORMAT/DP) >= ${dv_dp} || FORMAT/GT == '0/0'" | \\
-        bcftools filter -O u --threads ${variant_cores} --mode + --soft-filter multi --include "GT != '0/0' && GT != '0/1' && GT != '1/1'" | \\
         bcftools filter --mode + --soft-filter het --exclude 'AC==1' | \\
         vk geno transfer-filter - | \\
         bcftools view -O z > ${SM}.union.vcf.gz
@@ -537,6 +536,7 @@ process generate_hard_vcf {
         vk filter HET --max=0.10 - | \\
         vk filter REF --min=1 - | \\
         vk filter ALT --min=1 - | \\
+        bcftools filter --threads ${variant_cores} --set-GTs . --include "GT != '0/0' & GT != '0/1' & GT != '1/1'" | \\
         vcffixup - | \\
         bcftools view -O z > WI.${date}.hard-filter.vcf.gz
         bcftools index -f WI.${date}.hard-filter.vcf.gz
