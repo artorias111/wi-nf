@@ -900,7 +900,7 @@ process generate_isotype_vcf {
         set val(isotype), file("${isotype}.${date}.vcf.gz"), file("${isotype}.${date}.vcf.gz.tbi") into isotype_ind_vcf
 
     """
-    bcftools view -O z --samples ${isotype} WI.${date}.vcf.gz > ${isotype}.${date}.vcf.gz && tabix ${isotype}.${date}.vcf.gz
+    bcftools view -O z --samples ${isotype} --exclude-uncalled WI.${date}.vcf.gz  > ${isotype}.${date}.vcf.gz && tabix ${isotype}.${date}.vcf.gz
     """
 
 }
