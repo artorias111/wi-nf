@@ -388,8 +388,8 @@ process call_variants_union {
         bcftools filter -O u --threads ${variant_cores} --mode + --soft-filter quality --include "QUAL >= ${qual} || FORMAT/GT == '0/0'" |  \\
         bcftools filter -O u --threads ${variant_cores} --mode + --soft-filter min_depth --include "FORMAT/DP > ${min_depth}" | \\
         bcftools filter -O u --threads ${variant_cores} --mode + --soft-filter mapping_quality --include "INFO/MQ > ${mq}" | \\
-        bcftools filter -O u --threads ${variant_cores} --mode + --soft-filter dv_dp --include "(FORMAT/AD[1])/(FORMAT/DP) >= ${dv_dp} || FORMAT/GT == '0/0'" | \\
-        bcftools filter --mode + --soft-filter het --exclude 'AC==1' | \\
+        bcftools filter -O v --threads ${variant_cores} --mode + --soft-filter dv_dp --include "(FORMAT/AD[1])/(FORMAT/DP) >= ${dv_dp} || FORMAT/GT == '0/0'" | \\
+        awk -v OFS="\t" '\$0 ~ "^#" { print } \$0 ~ ":AB" { gsub("PASS","", \$7); if (\$7 == "") { \$7 = "het"; } else { $7 = $7 ";het"; } } \$0 !~ "^#" { print }' | \\
         vk geno transfer-filter - | \\
         bcftools view -O z > ${SM}.union.vcf.gz
         bcftools index ${SM}.union.vcf.gz
@@ -806,9 +806,9 @@ process wig_to_bed {
 }
 
 
-process final_vcf {
+process soft_filter_vcf {
 
-    publishDir analysis_dir + "/vcf", mode: 'copy'
+    publishDir analysis_dir, mode: 'copy'
 
     cpus alignment_cores
 
@@ -819,39 +819,33 @@ process final_vcf {
         file('vcf_anno.conf') from Channel.fromPath("vcfanno.conf")
 
     output:
-        set file("WI.${date}.vcf.gz"), file("WI.${date}.vcf.gz.csi"), file("WI.${date}.vcf.gz.tbi") into final_vcf
+        set file("WI.${date}.vcf.gz"), file("WI.${date}.vcf.gz.csi"), file("WI.${date}.vcf.gz.tbi") into soft_filter_vcf
+        file("WI.${date}.soft-filter.stats.txt")
 
     """
         vcfanno -p ${alignment_cores} vcf_anno.conf WI.${date}.snpeff.vcf.gz | bcftools view -O z > WI.${date}.vcf.gz
         bcftools index WI.${date}.vcf.gz
         tabix WI.${date}.vcf.gz
-    """
-
-}
-
-final_vcf.into { final_vcf_strain; final_vcf_isotype_list; final_vcf_mod_tracks; final_vcf_gtcheck; final_vcf_tsv }
-
-process final_vcf_stat {
-
-    publishDir  analysis_dir + "/vcf", mode: 'copy'
-
-    input:
-        set file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi"), file("WI.${date}.soft-filter.vcf.gz.tbi") from final_vcf_gtcheck
-    output:
-        file("WI.${date}.stats.txt")
-
-    """
         bcftools stats --verbose WI.${date}.soft-filter.vcf.gz > WI.${date}.soft-filter.stats.txt
     """
+
 }
 
+soft_filter_vcf.into { 
+                        soft_filter_vcf_strain;
+                        soft_filter_vcf_isotype_list;
+                        soft_filter_vcf_mod_tracks;
+                        soft_filter_vcf_tsv
+                     }
+
+
 mod_tracks = Channel.from(["LOW", "MODERATE", "HIGH", "MODIFIER"])
-final_vcf_mod_tracks.spread(mod_tracks).into { mod_track_set }
+soft_filter_vcf_mod_tracks.spread(mod_tracks).into { mod_track_set }
 
 
 process generate_mod_tracks {
 
-    publishDir analysis_dir + '/tracks/severity', mode: 'copy'
+    publishDir analysis_dir + '/tracks', mode: 'copy'
 
     tag { severity }
 
@@ -872,7 +866,7 @@ process generate_strain_list {
     executor 'local'
 
     input:
-        set file("WI.${date}.vcf.gz"), file("WI.${date}.vcf.gz.csi"), file("WI.${date}.vcf.gz.tbi") from final_vcf_isotype_list
+        set file("WI.${date}.vcf.gz"), file("WI.${date}.vcf.gz.csi"), file("WI.${date}.vcf.gz.tbi") from soft_filter_vcf_isotype_list
 
     output:
         file('isotype_list.tsv') into isotype_list
@@ -884,12 +878,12 @@ process generate_strain_list {
 }
 
 
-isotype_list.splitText() { it.strip() } .spread(final_vcf_strain).into { isotype_set_vcf; isotype_set_tsv }
+isotype_list.splitText() { it.strip() } .spread(soft_filter_vcf_strain).into { isotype_set_vcf; isotype_set_tsv }
 
 
 process generate_isotype_vcf {
 
-    publishDir analysis_dir + '/tracks/isotype', mode: 'copy'
+    publishDir analysis_dir + '/isotype/vcf', mode: 'copy'
 
     tag { isotype }
 
@@ -908,7 +902,7 @@ process generate_isotype_vcf {
 
 process generate_isotype_tsv {
 
-    publishDir analysis_dir + '/isotype_tsv', mode: 'copy'
+    publishDir analysis_dir + '/isotype/tsv', mode: 'copy'
 
     tag { isotype }
 
@@ -919,8 +913,8 @@ process generate_isotype_tsv {
         set val(isotype), file("${isotype}.${date}.tsv")
 
     """
-    bcftools query -f '[%CHROM\\t%POS\\t%REF\\t%ALT\\t%TGT]\\n' --samples ${isotype} WI.${date}.vcf.gz > ${isotype}.${date}.tsv
-    gsutil cp ${isotype}.${date}.tsv gs://elegansvariation.org/releases/${date}/isotype_tsv/
+    bcftools query -f '[%CHROM\\t%POS\\t%REF\\t%FILTER\\t%ALT\\t%TGT\\t%FT]\\n' --samples ${isotype} WI.${date}.vcf.gz | bgzip > ${isotype}.${date}.tsv.gz
+    tabix -s 1 -b 2 -e 2 ${isotype}.${date}.tsv.gz
     """
 
 }
@@ -928,38 +922,41 @@ process generate_isotype_tsv {
 
 process generate_tsv {
 
-    publishDir analysis_dir + "/tsv", mode: 'copy'
+    publishDir analysis_dir, mode: 'copy'
 
     input:
-        set file("WI.${date}.vcf.gz"), file("WI.${date}.vcf.gz.csi"), file("WI.${date}.vcf.gz.tbi") from final_vcf_tsv
+        set file("WI.${date}.vcf.gz"), file("WI.${date}.vcf.gz.csi"), file("WI.${date}.vcf.gz.tbi") from soft_filter_vcf_tsv
 
     output:
-        file("WI.${date}.tsv.gz") into bq_tsv
+        file("WI.${date}.soft-filter.tsv.gz") into bq_tsv
 
     """
         echo ${contig_list.join(" ")} | tr ' ' '\\n' | xargs --verbose -I {} -P ${variant_cores} sh -c "bcftools query --regions {} -f '[%CHROM\\t%POS\\t%SAMPLE\\t%REF\\t%ALT\\t%FILTER\\t%FT\\t%GT\n]' WI.${date}.vcf.gz > {}.tsv"
         order=`echo ${contig_list.join(" ")} | tr ' ' '\\n' | awk '{ print \$1 ".tsv" }'`
 
-        cat <(echo 'CHROM\tPOS\tSAMPLE\tREF\tALT\tFILTER\tFT\tGT') \${order} > WI.${date}.tsv
-        gzip WI.${date}.tsv
-        gsutil cp WI.${date}.tsv.gz gs://elegansvariation.org/releases/${date}/
+        cat <(echo 'CHROM\tPOS\tSAMPLE\tREF\tALT\tFILTER\tFT\tGT') \${order} > WI.${date}.soft-filter.tsv.gz
+        pigz WI.${date}.tsv
+        tabix -s 1 -b 2 -e 2 WI.${date}.soft-filter.tsv.gz
     """
 }
 
 
 process upload_bq {
 
+    executor 'local'
+
     input:
-        file("WI.${date}.tsv.gz") from bq_tsv
+        file("WI.${date}.soft-filter.tsv.gz") from bq_tsv
 
     """
+        gsutil cp WI.${date}.soft-filter.tsv.gz gs://elegansvariation.org/releases/${date}/
         # Only load if its not been done before
         if [[ \$(bq ls WI | grep $date | wc -l ) -eq 0 ]]
         then
             bq load --field_delimiter "\\t" \
             --skip_leading_rows 1 \
             --ignore_unknown_values \
-            andersen-lab:WI.${date}  \
+            andersen-lab:WI.${date}.soft-filter  \
             gs://elegansvariation.org/releases/${date}/WI.${date}.tsv.gz \
             CHROM:STRING,POS:INTEGER,SAMPLE:STRING,REF:STRING,ALT:STRING,FILTER:STRING,FT:STRING,GT:STRING
         fi
