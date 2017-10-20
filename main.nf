@@ -1,4 +1,10 @@
 #!/usr/bin/env nextflow
+/* 
+ * Authors: 
+ * - Daniel Cook <danielecook@gmail.com>
+ *  
+ */
+
 tmpdir = config.tmpdir
 reference = config.reference
 annotation_reference = config.annotation_reference
@@ -9,6 +15,24 @@ date = config.date
 analysis_dir = config.analysis_dir
 SM_alignments_dir = config.SM_alignments_dir
 beagle_location = config.beagle_location
+
+params.debug = false
+params.annotation_reference = "WS261"
+params.cores = 4
+params.cores_large = 8
+params.reference = "(required)"
+params.tmpdir = "tmp/"
+
+if (params.debug == true) {
+    println """
+
+        ***Using debug mode***
+
+    """
+    params.fq_sheet = "${workflow.projectDir}/test_data/fq_sheet.tsv"
+} else {
+    params.fq_sheet = "(required)"
+}
 
 // Define contigs here!
 contig_list = ["I", "II", "III", "IV", "V", "X", "MtDNA"]
@@ -25,6 +49,47 @@ dv_dp=0.5
 
 println "Running Wild Isolate Pipeline!!!"
 println "Using Reference: ${genome}" 
+
+
+
+param_summary = '''
+
+
+     ▄         ▄  ▄▄▄▄▄▄▄▄▄▄▄                         ▄▄        ▄  ▄▄▄▄▄▄▄▄▄▄▄ 
+    ▐░▌       ▐░▌▐░░░░░░░░░░░▌                       ▐░░▌      ▐░▌▐░░░░░░░░░░░▌
+    ▐░▌       ▐░▌ ▀▀▀▀█░█▀▀▀▀                        ▐░▌░▌     ▐░▌▐░█▀▀▀▀▀▀▀▀▀ 
+    ▐░▌       ▐░▌     ▐░▌                            ▐░▌▐░▌    ▐░▌▐░▌          
+    ▐░▌   ▄   ▐░▌     ▐░▌           ▄▄▄▄▄▄▄▄▄▄▄      ▐░▌ ▐░▌   ▐░▌▐░█▄▄▄▄▄▄▄▄▄ 
+    ▐░▌  ▐░▌  ▐░▌     ▐░▌          ▐░░░░░░░░░░░▌     ▐░▌  ▐░▌  ▐░▌▐░░░░░░░░░░░▌
+    ▐░▌ ▐░▌░▌ ▐░▌     ▐░▌           ▀▀▀▀▀▀▀▀▀▀▀      ▐░▌   ▐░▌ ▐░▌▐░█▀▀▀▀▀▀▀▀▀ 
+    ▐░▌▐░▌ ▐░▌▐░▌     ▐░▌                            ▐░▌    ▐░▌▐░▌▐░▌          
+    ▐░▌░▌   ▐░▐░▌ ▄▄▄▄█░█▄▄▄▄                        ▐░▌     ▐░▐░▌▐░▌          
+    ▐░░▌     ▐░░▌▐░░░░░░░░░░░▌                       ▐░▌      ▐░░▌▐░▌          
+     ▀▀       ▀▀  ▀▀▀▀▀▀▀▀▀▀▀                         ▀        ▀▀  ▀           
+                                                                           
+                                                                    
+''' + """
+
+    parameters           description                    Set/Default
+    ==========           ===========                    =======
+    
+    --debug              Set to 'true' to test          ${params.debug}
+    --cores              Number of cores                ${params.cores}
+    --A                  Parent A                       ${params.A}
+    --B                  Parent B                       ${params.B}
+    --cA                 Parent A color (for plots)     ${params.cA}
+    --cB                 Parent B color (for plots)     ${params.cB}
+    --out                Directory to output results    ${params.out}
+    --fqs                fastq file (see help)          ${params.fqs}
+    --reference          Reference Genome               ${params.reference}
+    --vcf                VCF to fetch parents from      ${params.vcf}
+    --tmpdir             A temporary directory          ${params.tmpdir}
+
+    HELP: http://andersenlab.org/dry-guide/pipeline-wi/
+
+"""
+
+println param_summary
 
 strainFile = new File("SM_sample_sheet.tsv")
 fqs = Channel.from(strainFile.collect { it.tokenize( '\t' ) })
@@ -389,7 +454,7 @@ process call_variants_union {
         bcftools filter -O u --threads ${variant_cores} --mode + --soft-filter min_depth --include "FORMAT/DP > ${min_depth}" | \\
         bcftools filter -O u --threads ${variant_cores} --mode + --soft-filter mapping_quality --include "INFO/MQ > ${mq}" | \\
         bcftools filter -O v --threads ${variant_cores} --mode + --soft-filter dv_dp --include "(FORMAT/AD[1])/(FORMAT/DP) >= ${dv_dp} || FORMAT/GT == '0/0'" | \\
-        awk -v OFS="\t" '\$0 ~ "^#" { print } \$0 ~ ":AB" { gsub("PASS","", \$7); if (\$7 == "") { \$7 = "het"; } else { $7 = $7 ";het"; } } \$0 !~ "^#" { print }' | \\
+        awk -v OFS="\t" '\$0 ~ "^#" { print } \$0 ~ ":AB" { gsub("PASS","", \$7); if (\$7 == "") { \$7 = "het"; } else { \$7 = \$7 ";het"; } } \$0 !~ "^#" { print }' | \\
         vk geno transfer-filter - | \\
         bcftools view -O z > ${SM}.union.vcf.gz
         bcftools index ${SM}.union.vcf.gz
@@ -913,8 +978,10 @@ process generate_isotype_tsv {
         set val(isotype), file("${isotype}.${date}.tsv")
 
     """
-    bcftools query -f '[%CHROM\\t%POS\\t%REF\\t%FILTER\\t%ALT\\t%TGT\\t%FT]\\n' --samples ${isotype} WI.${date}.vcf.gz | bgzip > ${isotype}.${date}.tsv.gz
-    tabix -s 1 -b 2 -e 2 ${isotype}.${date}.tsv.gz
+    echo 'CHROM\\tPOS\\tREF\\tALT\\tFILTER\\tFT\\tGT' > ${isotype}.${date}.tsv
+    bcftools query -f '[%CHROM\\t%POS\\t%REF\\t%ALT\t%FILTER\\t%FT\\t%TGT]\\n' --samples ${isotype} WI.${date}.vcf.gz > ${isotype}.${date}.tsv
+    bgzip ${isotype}.${date}.tsv
+    tabix -S 1 -s 1 -b 2 -e 2 ${isotype}.${date}.tsv.gz
     """
 
 }
