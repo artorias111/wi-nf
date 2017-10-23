@@ -5,39 +5,6 @@
  *  
  */
 
-tmpdir = config.tmpdir
-reference = config.reference
-annotation_reference = config.annotation_reference
-alignment_cores = config.alignment_cores
-variant_cores = config.variant_cores
-genome = config.genome
-date = config.date
-analysis_dir = config.analysis_dir
-SM_alignments_dir = config.SM_alignments_dir
-beagle_location = config.beagle_location
-
-params.debug = false
-params.annotation_reference = "WS261"
-params.cores = 4
-params.cores_large = 8
-params.reference = "(required)"
-params.tmpdir = "tmp/"
-
-if (params.debug == true) {
-    println """
-
-        ***Using debug mode***
-
-    """
-    params.fq_sheet = "${workflow.projectDir}/test_data/fq_sheet.tsv"
-} else {
-    params.fq_sheet = "(required)"
-}
-
-// Define contigs here!
-contig_list = ["I", "II", "III", "IV", "V", "X", "MtDNA"]
-contigs = Channel.from(contig_list)
-
 /*
     Filtering configuration
 */
@@ -47,9 +14,47 @@ qual=30
 mq=40
 dv_dp=0.5
 
-println "Running Wild Isolate Pipeline!!!"
-println "Using Reference: ${genome}" 
+/* 
+    Globals
+*/
 
+// Define contigs here!
+CONTIG_LIST = ["I", "II", "III", "IV", "V", "X", "MtDNA"]
+contigs = Channel.from(CONTIG_LIST)
+
+
+/*
+    Params
+*/
+
+// Debug
+if (params.debug == true) {
+    println """
+
+        ***Using debug mode***
+
+    """
+    params.fqs = "${workflow.projectDir}/test_data/SM_sample_sheet.tsv"
+    params.isotype_alignments_directory = "${params.out}/${isotype_alignments_directory}"
+} else {
+    // The SM sheet that is used is located in the root of the git repo
+    params.fqs = "${workflow.projectDir}/SM_sample_sheet.tsv"
+}
+
+date = new Date().format( 'yyyy-MM-dd' )
+params.out = "WI-${date}"
+params.debug = false
+params.annotation_reference = "WS261"
+params.cores = 4
+params.cores_large = 8
+params.tmpdir = "tmp/"
+params.reference = "(required)"
+params.isotype_alignments_directory = "(required)"
+
+
+/*
+    UX
+*/
 
 
 param_summary = '''
@@ -75,10 +80,6 @@ param_summary = '''
     
     --debug              Set to 'true' to test          ${params.debug}
     --cores              Number of cores                ${params.cores}
-    --A                  Parent A                       ${params.A}
-    --B                  Parent B                       ${params.B}
-    --cA                 Parent A color (for plots)     ${params.cA}
-    --cB                 Parent B color (for plots)     ${params.cB}
     --out                Directory to output results    ${params.out}
     --fqs                fastq file (see help)          ${params.fqs}
     --reference          Reference Genome               ${params.reference}
@@ -91,31 +92,43 @@ param_summary = '''
 
 println param_summary
 
-strainFile = new File("SM_sample_sheet.tsv")
-fqs = Channel.from(strainFile.collect { it.tokenize( '\t' ) })
+if (params.reference == "(required)" || params.fqs == "(required)") {
 
-process setup_dirs {
+    println """
+    The Set/Default column shows what the value is currently set to
+    or would be set to if it is not specified (it's default).
+    """
+    System.exit(1)
+} 
 
-    executor 'local'
+if (!parental_vcf.exists()) {
+    println """
 
-    publishDir "${analysis_dir}/"
-
-    input:
-        file 'SM_sample_sheet.tsv' from Channel.fromPath("SM_sample_sheet.tsv")
-    output:
-        file 'SM_sample_sheet.tsv'
+    Error: VCF Does not exist
 
     """
-        gsutil cp SM_sample_sheet.tsv gs://elegansvariation.org/releases/${date}/
-    """
+    System.exit(1)
 }
+
+if (!reference_handle.exists()) {
+    println """
+
+    Error: Reference does not exist
+
+    """
+    System.exit(1)
+} 
+
+
+strainFile = new File(params.fqs)
+fqs = Channel.from(strainFile.collect { it.tokenize( '\t' ) })
 
 /*
     Fastq alignment
 */
 process perform_alignment {
 
-    cpus alignment_cores
+    cpus cores_large
 
     tag { ID }
 
@@ -127,7 +140,7 @@ process perform_alignment {
     
     """
         bwa mem -t ${alignment_cores} -R '@RG\tID:${ID}\tLB:${LB}\tSM:${SM}' ${reference} ${fq1} ${fq2} | \\
-        sambamba view --nthreads=${alignment_cores} --sam-input --format=bam --with-header /dev/stdin | \\
+        sambamba view --nthreads=${alignment_cores} --show-progress --sam-input --format=bam --with-header /dev/stdin | \\
         sambamba sort --nthreads=${alignment_cores} --show-progress --tmpdir=${tmpdir} --out=${ID}.bam /dev/stdin
         sambamba index --nthreads=${alignment_cores} ${ID}.bam
     """
@@ -501,7 +514,7 @@ process merge_union_vcf_chromosome {
 }
 
 // Generate a list of ordered files.
-contig_raw_vcf = contig_list*.concat(".merged.raw.vcf.gz")
+contig_raw_vcf = CONTIG_LIST*.concat(".merged.raw.vcf.gz")
 
 process concatenate_union_vcf {
 
@@ -998,8 +1011,8 @@ process generate_tsv {
         file("WI.${date}.soft-filter.tsv.gz") into bq_tsv
 
     """
-        echo ${contig_list.join(" ")} | tr ' ' '\\n' | xargs --verbose -I {} -P ${variant_cores} sh -c "bcftools query --regions {} -f '[%CHROM\\t%POS\\t%SAMPLE\\t%REF\\t%ALT\\t%FILTER\\t%FT\\t%GT\n]' WI.${date}.vcf.gz > {}.tsv"
-        order=`echo ${contig_list.join(" ")} | tr ' ' '\\n' | awk '{ print \$1 ".tsv" }'`
+        echo ${CONTIG_LIST.join(" ")} | tr ' ' '\\n' | xargs --verbose -I {} -P ${variant_cores} sh -c "bcftools query --regions {} -f '[%CHROM\\t%POS\\t%SAMPLE\\t%REF\\t%ALT\\t%FILTER\\t%FT\\t%GT\n]' WI.${date}.vcf.gz > {}.tsv"
+        order=`echo ${CONTIG_LIST.join(" ")} | tr ' ' '\\n' | awk '{ print \$1 ".tsv" }'`
 
         cat <(echo 'CHROM\tPOS\tSAMPLE\tREF\tALT\tFILTER\tFT\tGT') \${order} > WI.${date}.soft-filter.tsv.gz
         pigz WI.${date}.tsv
