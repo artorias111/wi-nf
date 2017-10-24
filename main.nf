@@ -265,7 +265,7 @@ process SM_idx_stats {
 
 process SM_combine_idx_stats {
 
-    publishDir params.out + "/isotype", mode: 'copy'
+    publishDir params.out + "/alignment", mode: 'copy'
 
     input:
         val bam_idxstats from bam_idxstats_set.toSortedList()
@@ -300,7 +300,7 @@ process SM_bam_stats {
 
 process combine_SM_bam_stats {
 
-    publishDir params.out + "/SM", mode: 'copy'
+    publishDir params.out + "/alignment", mode: 'copy'
 
     input:
         val stat_files from SM_bam_stat_files.toSortedList()
@@ -310,19 +310,19 @@ process combine_SM_bam_stats {
 
     """
         echo -e "fq_pair_id\\tvariable\\tvalue\\tcomment" > SM_bam_stats.tsv
-        cat ${stat_files.join(" ")} >> SM_bam_stats.tsv
+        cat ${stat_files.join(" ")} >> SM_stats.tsv
     """
 }
 
 process format_duplicates {
 
-    publishDir params.out + "/duplicates", mode: 'copy'
+    publishDir params.out + "/alignment", mode: 'copy'
 
     input:
         val duplicates_set from duplicates_file.toSortedList()
 
     output:
-        file("bam_duplicates.tsv")
+        file("bam_duplicates.tsv") into bam_duplicates_stat
 
 
     """
@@ -356,7 +356,7 @@ process coverage_SM {
 
 process coverage_SM_merge {
 
-    publishDir params.out + "/isotype", mode: 'copy'
+    publishDir params.out + "/alignment", mode: 'copy'
 
     input:
         val sm_set from SM_coverage.toSortedList()
@@ -446,22 +446,20 @@ process call_variants_individual {
 
 process merge_variant_list {
 
-    publishDir params.out + "/sitelist", mode: 'copy'
+    publishDir params.out + "/variation", mode: 'copy'
     
     input:
         val sites from individual_sites.toSortedList()
 
     output:
         file("sitelist.tsv.gz") into gz_sitelist
+        file("sitelist.tsv.gz") into sitelist_stat
         file("sitelist.tsv.gz.tbi") into gz_sitelist_index
-        file("sitelist.tsv") into sitelist
-        file("sitelist.count.txt")
 
 
     """
         echo ${sites}
         cat ${sites.join(" ")} | sort -k1,1 -k2,2n | uniq > sitelist.tsv
-        cat sitelist.tsv | wc -l > sitelist.count.txt
         bgzip sitelist.tsv -c > sitelist.tsv.gz && tabix -s1 -b2 -e2 sitelist.tsv.gz
     """
 }
@@ -504,9 +502,9 @@ process call_variants_union {
 
 process generate_union_vcf_list {
 
-    cpus 1 
+    executor 'local'
 
-    publishDir params.out + "/vcf", mode: 'copy'
+    cpus 1 
 
     input:
        val vcf_set from union_vcf_list.toSortedList()
@@ -547,10 +545,7 @@ process concatenate_union_vcf {
 
     echo true
 
-    //publishDir params.out + "/vcf", mode: 'copy'
-
     input:
-        //val chrom from contigs_list_in
         val merge_vcf from raw_vcf.toSortedList()
 
     output:
@@ -566,9 +561,9 @@ process concatenate_union_vcf {
     """
 }
 
+// Generates the initial soft-vcf; but it still
+// needs to be annotated with snpeff and annovar.
 process generate_soft_vcf {
-
-    publishDir params.out + "/vcf", mode: 'copy'
 
     input:
         set file("merged.raw.vcf.gz"), file("merged.raw.vcf.gz.csi") from raw_vcf_concatenated
@@ -576,6 +571,7 @@ process generate_soft_vcf {
     output:
         set file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi") into filtered_vcf
         set val('filtered'), file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi") into filtered_vcf_stat
+        file("WI.${date}.soft-filter.stats.txt") into soft_filter_stats
 
     """
         bcftools view merged.raw.vcf.gz | \\
@@ -596,8 +592,6 @@ fix_snpeff_script = file("fix_snpeff_names.py")
 
 process annotate_vcf_snpeff {
 
-    publishDir params.out + "/vcf", mode: 'copy'
-
     input:
         set file("merged.WI.${date}.soft-filter.vcf.gz"), file("merged.WI.${date}.soft-filter.vcf.gz.csi") from filtered_vcf_snpeff
 
@@ -615,7 +609,6 @@ process annotate_vcf_snpeff {
         python `which fix_snpeff_names.py` - | \\
         bcftools view -O z > WI.${date}.snpeff.vcf.gz
         bcftools index WI.${date}.snpeff.vcf.gz
-        bcftools stats --verbose WI.${date}.snpeff.vcf.gz > WI.${date}.snpeff.stats.txt
     """
 
 }
@@ -635,6 +628,9 @@ process generate_hard_vcf {
         set file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") into tajima_bed
         set file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") into vcf_phylo
         set val('clean'), file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") into hard_vcf
+        file("WI.${date}.hard-filter.vcf.gz.tbi")
+        file("WI.${date}.hard-filter.stats.txt") into hard_filter_stats
+
 
     """
         # Generate hard-filtered (clean) vcf
@@ -648,6 +644,7 @@ process generate_hard_vcf {
         vcffixup - | \\
         bcftools view -O z > WI.${date}.hard-filter.vcf.gz
         bcftools index -f WI.${date}.hard-filter.vcf.gz
+        tabix WI.${date}.hard-filter.vcf.gz
         bcftools stats --verbose WI.${date}.hard-filter.vcf.gz > WI.${date}.hard-filter.stats.txt
     """
 }
@@ -688,7 +685,7 @@ process calculate_hard_vcf_summary {
 */
 process phylo_analysis {
 
-    publishDir params.out + "/phylo", mode: "copy"
+    publishDir params.out + "/popgen/trees", mode: "copy"
 
     tag { contig }
 
@@ -718,7 +715,7 @@ process phylo_analysis {
 
 process plot_trees {
 
-    publishDir params.out + "/phylo", mode: "copy"
+    publishDir params.out + "/popgen/trees", mode: "copy"
 
     tag { contig }
 
@@ -764,11 +761,14 @@ process imputation {
         set file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") from hard_vcf_to_impute 
     output:
         set file("WI.${date}.impute.vcf.gz"), file("WI.${date}.impute.vcf.gz.csi") into impute_vcf
-        set val('impute'), file("WI.${date}.impute.vcf.gz"), file("WI.${date}.impute.vcf.gz.csi") into impute_vcf_stat
+        file("WI.${date}.impute.stats.txt") into impute_stats
+        file("WI.${date}.impute.vcf.gz") into filtered_stats
+        file("WI.${date}.impute.vcf.gz.tbi")
 
     """
         java -jar `which beagle.jar` nthreads=${params.cores} window=8000 overlap=3000 impute=true ne=17500 gt=WI.${date}.hard-filter.vcf.gz out=WI.${date}.impute
-        bcftools index -f WI.${date}.impute.vcf.gz
+        bcftools index WI.${date}.impute.vcf.gz
+        tabix WI.${date}.impute.vcf.gz
         bcftools stats --verbose WI.${date}.impute.vcf.gz > WI.${date}.impute.stats.txt
     """
 }
@@ -824,33 +824,6 @@ process calculate_gtcheck {
 
 }
 
-/* 
-    Stat VCFs
-*/
-
-vcf_stat_set = filtered_vcf_stat.concat( impute_vcf_stat)
-
-/*
-    Stat IMPUTE and CLEAN Here; Final VCF statd below
-*/
-
-process stat_tsv {
-
-    tag { vcf_stat }
-
-    publishDir params.out + "/vcf", mode: 'copy'
-
-    input:
-        set val(vcf_stat), file("${vcf_stat}.vcf.gz"), file("${vcf_stat}.vcf.gz.csi") from vcf_stat_set
-
-    output:
-        file("WI.${date}.${vcf_stat}.stats.txt") into filtered_stats
-
-    """
-        bcftools stats --verbose ${vcf_stat}.vcf.gz > WI.${date}.${vcf_stat}.stats.txt
-    """
-
-}
 
 /*
     Perform concordance analysis
@@ -916,7 +889,7 @@ process wig_to_bed {
 }
 
 
-process soft_filter_vcf {
+process annovar_and_output_soft_filter_vcf {
 
     publishDir params.out + "/variation", mode: 'copy'
 
@@ -1031,5 +1004,67 @@ process generate_isotype_tsv {
     bgzip ${isotype}.${date}.tsv
     tabix -S 1 -s 1 -b 2 -e 2 ${isotype}.${date}.tsv.gz
     """
+
+}
+
+vcf_stats = soft_filter_stats.concat( hard_filter_stats, impute_stats )
+
+process multiqc_vcf {
+
+    executor 'local'
+
+    publishDir params.out + "/report", pattern: '*.html', mode: 'copy'
+
+    input:
+        file("stat*") from vcf_stats.toSortedList()
+
+    output:
+        file("SNV_report_data/multiqc_bcftools_stats.json") into SNV_report_json
+        file("SNV_report.html") into SNV_report
+
+    """
+        multiqc -k json --filename SNV_report.html .
+    """
+
+}
+
+process comprehensive_report {
+
+
+    input:
+        file("multiqc_bcftools_stats.json") from SNV_report_json
+        file("sitelist.tsv.gz") from sitelist_stat
+
+    """
+        echo "great"
+        exit 0
+    """
+
+}
+
+
+workflow.onComplete {
+
+    summary = """
+
+    Pipeline execution summary
+    ---------------------------
+    Completed at: ${workflow.complete}
+    Duration    : ${workflow.duration}
+    Success     : ${workflow.success}
+    workDir     : ${workflow.workDir}
+    exit status : ${workflow.exitStatus}
+    Error report: ${workflow.errorReport ?: '-'}
+    Git info: $workflow.repository - $workflow.revision [$workflow.commitId]
+
+    """
+
+    println summary
+
+    def outlog = new File("${params.out}/log.txt")
+    outlog.newWriter().withWriter {
+        outlog << param_summary
+        outlog << summary
+    }
 
 }
