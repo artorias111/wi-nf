@@ -80,7 +80,7 @@ RUN brew tap homebrew/science \
 
 RUN brew install fastqc --ignore-dependencies
 
-RUN pip2 install numpy cython
+RUN pip2 install numpy cython multiqc
 RUN pip2 install https://github.com/AndersenLab/bam-toolbox/archive/0.0.3.tar.gz
 RUN pip2 install vcf-kit
 
@@ -90,7 +90,7 @@ ENV R_LIBS_USER=/usr/local/lib/R/site-library
 RUN echo "r <- getOption('repos'); r['CRAN'] <- 'http://cran.us.r-project.org'; options(repos = r);" > ~/.Rprofile
 
 # Install R packages
-RUN Rscript -e 'install.packages(c("tidyverse", "cowplot", "ggmap", "ape", "devtools"))'
+RUN Rscript -e 'install.packages(c("tidyverse", "cowplot", "ggmap", "ape", "devtools", "knitr", "rmarkdown"))'
 RUN Rscript -e 'source("http://bioconductor.org/biocLite.R"); biocLite(c("phyloseq"))'
 RUN Rscript -e 'devtools::install_github("andersenlab/cegwas")'
 
@@ -100,3 +100,4 @@ RUN ln /home/linuxbrew/.linuxbrew/bin/python2 /home/linuxbrew/.linuxbrew/bin/pyt
 # Install telseq
 RUN wget -O /home/linuxbrew/.linuxbrew/bin/telseq https://github.com/zd1/telseq/raw/master/bin/ubuntu/telseq  \
     && chmod +x /home/linuxbrew/.linuxbrew/bin/telseq
+
