@@ -56,9 +56,9 @@ RUN apt-get update \
 
 USER linuxbrew
 # Install homebrew files
-RUN brew install gcc
-RUN brew install https://raw.githubusercontent.com/Linuxbrew/homebrew-core/043fb1f50af078db481b971d36c605f0dcf72ccd/Formula/jdk.rb
-RUN brew tap homebrew/science \
+RUN brew install gcc \
+    && brew install https://raw.githubusercontent.com/Linuxbrew/homebrew-core/043fb1f50af078db481b971d36c605f0dcf72ccd/Formula/jdk.rb \
+    && brew tap homebrew/science \
     && brew install \
             bwa \
             samtools \
@@ -75,27 +75,24 @@ RUN brew tap homebrew/science \
             snpeff \
             muscle \
             vcfanno \
-            igvtools
+            igvtools \
+            bamtools
 
 
 RUN brew install fastqc --ignore-dependencies
 
 RUN pip2 install numpy cython multiqc
-RUN pip2 install https://github.com/AndersenLab/bam-toolbox/archive/0.0.3.tar.gz
-RUN pip2 install vcf-kit
+RUN pip2 install https://github.com/AndersenLab/bam-toolbox/archive/0.0.3.tar.gz vcf-kit \
+    ln /home/linuxbrew/.linuxbrew/bin/python2 /home/linuxbrew/.linuxbrew/bin/python
 
 # Take over the R lib
 RUN sudo chown -R linuxbrew:linuxbrew /usr/local/
 ENV R_LIBS_USER=/usr/local/lib/R/site-library
-RUN echo "r <- getOption('repos'); r['CRAN'] <- 'http://cran.us.r-project.org'; options(repos = r);" > ~/.Rprofile
-
-# Install R packages
-RUN Rscript -e 'install.packages(c("tidyverse", "cowplot", "ggmap", "ape", "devtools", "knitr", "rmarkdown"))'
-RUN Rscript -e 'source("http://bioconductor.org/biocLite.R"); biocLite(c("phyloseq"))'
-RUN Rscript -e 'devtools::install_github("andersenlab/cegwas")'
-
-# Link python
-RUN ln /home/linuxbrew/.linuxbrew/bin/python2 /home/linuxbrew/.linuxbrew/bin/python
+# Install R packages and link python
+RUN echo "r <- getOption('repos'); r['CRAN'] <- 'http://cran.us.r-project.org'; options(repos = r);" > ~/.Rprofile \
+    && Rscript -e 'install.packages(c("tidyverse", "cowplot", "ggmap", "ape", "devtools", "knitr", "rmarkdown"))' \
+    && Rscript -e 'source("http://bioconductor.org/biocLite.R"); biocLite(c("phyloseq"))' \
+    && Rscript -e 'devtools::install_github("andersenlab/cegwas")'
 
 # Install telseq
 RUN wget -O /home/linuxbrew/.linuxbrew/bin/telseq https://github.com/zd1/telseq/raw/master/bin/ubuntu/telseq  \
