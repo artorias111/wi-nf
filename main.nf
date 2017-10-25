@@ -146,6 +146,9 @@ fqs = Channel.from(fq_file.collect { it.tokenize( '\t' ) })
 /*
     Fastq alignment
 */
+// The output looks strange below,
+// but its designed to group like samples together - so leave it!
+
 process perform_alignment {
 
     cpus params.cores
@@ -171,7 +174,6 @@ process perform_alignment {
     """
 }
 
-
 /* 
   Merge - Generate SM Bam
 */
@@ -187,7 +189,7 @@ process merge_bam {
 
     output:
         set val(SM), file("${SM}.bam"), file("${SM}.bam.bai") into SM_bam_set 
-        file("${SM}.duplicates.txt") into duplicates_file
+        file("${SM}.picard.sam.markduplicates") into duplicates_set
         
     """
     count=`echo ${bam.join(" ")} | tr ' ' '\\n' | wc -l`
@@ -200,7 +202,7 @@ process merge_bam {
         sambamba index --nthreads=${params.cores} ${SM}.merged.bam
     fi
 
-    picard MarkDuplicates I=${SM}.merged.bam O=${SM}.bam M=${SM}.duplicates.txt VALIDATION_STRINGENCY=SILENT REMOVE_DUPLICATES=false
+    picard MarkDuplicates I=${SM}.merged.bam O=${SM}.bam M=${SM}.picard.sam.markduplicates VALIDATION_STRINGENCY=SILENT REMOVE_DUPLICATES=false
     sambamba index --nthreads=${params.cores} ${SM}.bam
     """
 }
@@ -213,12 +215,42 @@ SM_bam_set.into {
                   bam_snp_individual;
                   bam_snp_union;
                   bam_telseq;
-                  bam_to_cram
+                  bam_to_cram;
+                  bam_SM_stats;
+}
+
+process bam_SM_stats {
+
+    cpus params.cores
+
+    tag { SM }
+
+    input:
+        set val(SM), file("${SM}.bam"), file("${SM}.bam.bai") from bam_SM_stats
+
+    output:
+         file("${SM}.samtools.txt") into SM_samtools_stats_set
+         //file("${SM}.bamtools.txt") into SM_bamtools_stats_set
+         //set file("qualimap/${SM}.genome_results.txt"), file("qualimap/raw_data_qualimapReport/*") into SM_qualimap_stats_set
+         file("${SM}_fastqc.zip") into SM_fastqc_stats_set
+         file("${SM}.picard.*") into SM_picard_stats_set
+
+    """
+        samtools stats ${SM}.bam > ${SM}.samtools.txt
+        #bamtools stats -in ${SM}.bam > ${SM}.bamtools.txt
+        #qualimap bamqc -bam ${SM}.bam -outdir qualimap -outformat HTML
+        fastqc --threads ${params.cores} ${SM}.bam
+        picard CollectAlignmentSummaryMetrics R=${reference_handle} I=${SM}.bam O=${SM}.picard.alignment_metrics.txt
+        picard CollectInsertSizeMetrics I=${SM}.bam O=${SM}.picard.insert_metrics.txt H=${SM}.picard.insert_histogram.txt
+    """
+
 }
 
 process bam_publish {
 
     publishDir params.bamdir + "/WI/isotype", mode: 'copy', pattern: '*.bam*'
+
+    tag { SM }
 
     input:
         set val(SM), file("${SM}.bam"), file("${SM}.bam.bai") from bam_publish
@@ -256,10 +288,11 @@ process SM_idx_stats {
     input:
         set val(SM), file("${SM}.bam"), file("${SM}.bam.bai") from bam_idxstats
     output:
-        file bam_idxstats into bam_idxstats_set
+        file("${SM}.bam_idxstats") into bam_idxstats_set
+        file("${SM}.bam_idxstats") into bam_idxstats_multiqc
 
     """
-        samtools idxstats ${SM}.bam | awk '{ print "${SM}\\t" \$0 }' > bam_idxstats
+        samtools idxstats ${SM}.bam | awk '{ print "${SM}\\t" \$0 }' > ${SM}.bam_idxstats
     """
 }
 
@@ -314,26 +347,6 @@ process combine_SM_bam_stats {
     """
 }
 
-process format_duplicates {
-
-    publishDir params.out + "/alignment", mode: 'copy'
-
-    input:
-        val duplicates_set from duplicates_file.toSortedList()
-
-    output:
-        file("bam_duplicates.tsv") into bam_duplicates_stat
-
-
-    """
-        echo -e 'filename\\tlibrary\\tunpaired_reads_examined\\tread_pairs_examined\\tsecondary_or_supplementary_rds\\tunmapped_reads\\tunpaired_read_duplicates\\tread_pair_duplicates\\tread_pair_optical_duplicates\\tpercent_duplication\\testimated_library_size' > bam_duplicates.tsv
-        for i in ${duplicates_set.join(" ")}; do
-            f=\$(basename \${i})
-            cat \${i} | awk -v f=\${f/.duplicates.txt/} 'NR >= 8 && \$0 !~ "##.*" && \$0 != ""  { print f "\\t" \$0 } NR >= 8 && \$0 ~ "##.*" { exit }'  >> bam_duplicates.tsv
-        done;
-    """
-}
-
 /*
     Coverage Bam
 */
@@ -362,7 +375,7 @@ process coverage_SM_merge {
         val sm_set from SM_coverage.toSortedList()
 
     output:
-        file("SM_coverage.full.tsv")
+        file("SM_coverage.full.tsv") into mt_content
         file("SM_coverage.tsv") into SM_coverage_merged
 
     """
@@ -371,6 +384,21 @@ process coverage_SM_merge {
 
         # Generate condensed version
         cat <(echo -e 'strain\\tcoverage') <(cat SM_coverage.full.tsv | grep 'genome' | grep 'depth_of_coverage' | cut -f 1,6) > SM_coverage.tsv
+    """
+}
+
+process output_mt_content {
+
+    publishDir params.out + "/phenotype", mode: 'copy'
+
+    input:
+        file("SM_coverage.full.tsv") from mt_content
+
+    output:
+        file("MT_content.tsv")
+
+    """
+        cat <(echo -e 'isotype\\tmt_content') <(cat SM_coverage.full.tsv | awk '/mt_nuclear_ratio/' | cut -f 1,6) > MT_content.tsv
     """
 }
 
@@ -396,7 +424,7 @@ process combine_telseq {
 
     executor 'local'
 
-    publishDir params.out + "/SM", mode: 'copy'
+    publishDir params.out + "/phenotype", mode: 'copy'
 
     input:
         file("ind_telseq?.txt") from telseq_results.toSortedList()
@@ -586,7 +614,12 @@ process generate_soft_vcf {
     """
 }
 
-filtered_vcf.into { filtered_vcf_snpeff; filtered_vcf_to_clean; filtered_vcf_gtcheck }
+filtered_vcf.into { 
+                    filtered_vcf_snpeff;
+                    filtered_vcf_to_clean;
+                    filtered_vcf_gtcheck;
+                    filtered_vcf_primer;
+                  }
 
 fix_snpeff_script = file("fix_snpeff_names.py")
 
@@ -597,6 +630,7 @@ process annotate_vcf_snpeff {
 
     output:
         set file("WI.${date}.snpeff.vcf.gz"), file("WI.${date}.snpeff.vcf.gz.csi") into snpeff_vcf
+        file("snpeff_out.csv") into snpeff_multiqc
 
     """
         # First run generates the list of gene identifiers
@@ -604,7 +638,7 @@ process annotate_vcf_snpeff {
         fix_snpeff_names.py
 
         bcftools view -O v merged.WI.${date}.soft-filter.vcf.gz | \\
-        snpEff eff -noInteraction -no-downstream -no-intergenic -no-upstream ${params.annotation_reference} | \\
+        snpEff eff -csvStats snpeff_out.csv -noInteraction -no-downstream -no-intergenic -no-upstream ${params.annotation_reference} | \\
         bcftools view -O v | \\
         python `which fix_snpeff_names.py` - | \\
         bcftools view -O z > WI.${date}.snpeff.vcf.gz
@@ -651,6 +685,38 @@ process generate_hard_vcf {
 
 hard_vcf.set { hard_vcf_summary }
 
+process calculate_gtcheck {
+
+    publishDir params.out + "/concordance", mode: 'copy'
+
+    input:
+        set file("merged.filtered.snp.vcf.gz"), file("merged.filtered.snp.vcf.gz.csi") from filtered_vcf_gtcheck
+
+    output:
+        file("gtcheck.tsv") into gtcheck
+
+    """
+        echo -e "discordance\\tsites\\tavg_min_depth\\ti\\tj" > gtcheck.tsv
+        bcftools gtcheck -H -G 1 merged.filtered.snp.vcf.gz | egrep '^CN' | cut -f 2-6 >> gtcheck.tsv
+    """
+
+}
+
+
+process generate_primers {
+
+    input:
+        set file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi") from filtered_vcf
+
+    output:
+        file('primers.tsv')
+
+    """
+        vk primer snip --ref=WS245 WI.${date}.soft-filter.vcf.gz > primers.tsv
+    """
+
+
+}
 
 /*
     Calculate Singletons
@@ -658,7 +724,7 @@ hard_vcf.set { hard_vcf_summary }
 
 process calculate_hard_vcf_summary {
 
-    publishDir params.out + "/summary", mode: 'copy'
+    publishDir params.out + "/variation", mode: 'copy'
 
     input:
         set val('clean'), file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") from hard_vcf_summary
@@ -802,24 +868,6 @@ process make_mapping {
 
     """
         Rscript -e 'library(cegwas); snps <- generate_mapping("WI.${date}.impute.vcf.gz"); save(snps, file = "snps.Rda");'
-    """
-
-}
-
-
-process calculate_gtcheck {
-
-    publishDir params.out + "/concordance", mode: 'copy'
-
-    input:
-        set file("merged.filtered.snp.vcf.gz"), file("merged.filtered.snp.vcf.gz.csi") from filtered_vcf_gtcheck
-
-    output:
-        file("gtcheck.tsv") into gtcheck
-
-    """
-        echo -e "discordance\\tsites\\tavg_min_depth\\ti\\tj" > gtcheck.tsv
-        bcftools gtcheck -H -G 1 merged.filtered.snp.vcf.gz | egrep '^CN' | cut -f 2-6 >> gtcheck.tsv
     """
 
 }
@@ -1009,21 +1057,29 @@ process generate_isotype_tsv {
 
 vcf_stats = soft_filter_stats.concat( hard_filter_stats, impute_stats )
 
-process multiqc_vcf {
+
+process multiqc_report {
 
     executor 'local'
 
-    publishDir params.out + "/report", pattern: '*.html', mode: 'copy'
+    publishDir params.out + "/report", mode: 'copy'
 
     input:
         file("stat*") from vcf_stats.toSortedList()
+        file(samtools_stats) from SM_samtools_stats_set.toSortedList()
+        //file(bamtools_stats) from SM_bamtools_stats_set.toSortedList()
+        file(duplicates) from duplicates_set.toSortedList()
+        file(fastqc) from SM_fastqc_stats_set.toSortedList()
+        file("bam*.idxstats") from bam_idxstats_multiqc.toSortedList()
+        file("picard*.stats.txt") from SM_picard_stats_set.collect()
+        file("snpeff_out.csv") from snpeff_multiqc
 
     output:
-        file("SNV_report_data/multiqc_bcftools_stats.json") into SNV_report_json
-        file("SNV_report.html") into SNV_report
+        file("multiqc_data/*.json") into multiqc_json_files
+        file("multiqc.html")
 
     """
-        multiqc -k json --filename SNV_report.html .
+        multiqc -k json --filename multiqc.html .
     """
 
 }
@@ -1032,7 +1088,7 @@ process comprehensive_report {
 
 
     input:
-        file("multiqc_bcftools_stats.json") from SNV_report_json
+        file("multiqc_data/*.json") from multiqc_json_files
         file("sitelist.tsv.gz") from sitelist_stat
 
     """
@@ -1066,5 +1122,7 @@ workflow.onComplete {
         outlog << param_summary
         outlog << summary
     }
+
+
 
 }
