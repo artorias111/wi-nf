@@ -27,29 +27,43 @@ contigs = Channel.from(CONTIG_LIST)
     Params
 */
 
-// Debug
-if (params.debug == true) {
-    println """
-
-        ***Using debug mode***
-
-    """
-    params.fqs = "${workflow.projectDir}/test_data/SM_sample_sheet.tsv"
-    params.isotype_alignments_directory = "${params.out}/${isotype_alignments_directory}"
-} else {
-    // The SM sheet that is used is located in the root of the git repo
-    params.fqs = "${workflow.projectDir}/SM_sample_sheet.tsv"
-}
-
 date = new Date().format( 'yyyy-MM-dd' )
 params.out = "WI-${date}"
 params.debug = false
 params.annotation_reference = "WS261"
 params.cores = 4
-params.cores_large = 8
 params.tmpdir = "tmp/"
-params.reference = "(required)"
-params.isotype_alignments_directory = "(required)"
+File reference = new File("${params.reference}")
+if (params.reference != "(required)") {
+   reference_handle = reference.getAbsolutePath();
+} else {
+   reference_handle = "(required)"
+}
+
+// Debug
+if (params.debug == true) {
+    println """
+
+        *** Using debug mode ***
+
+    """
+    params.fqs = "${workflow.projectDir}/test_data/SM_sample_sheet.tsv"
+    params.bamdir = "${params.out}/bam"
+
+    // lower filter thresholds
+    min_depth=0
+    qual=10
+    mq=10
+    dv_dp=0.0
+
+} else {
+    // The SM sheet that is used is located in the root of the git repo
+    params.fqs = "${workflow.projectDir}/SM_sample_sheet.tsv"
+    params.bamdir = "(required)"
+}
+
+File fq_file = new File("${params.fqs}");
+params.fq_file_prefix = fq_file.getParentFile().getAbsolutePath();
 
 
 /*
@@ -75,16 +89,18 @@ param_summary = '''
                                                                     
 ''' + """
 
-    parameters           description                    Set/Default
-    ==========           ===========                    =======
-    
-    --debug              Set to 'true' to test          ${params.debug}
-    --cores              Number of cores                ${params.cores}
-    --out                Directory to output results    ${params.out}
-    --fqs                fastq file (see help)          ${params.fqs}
-    --reference          Reference Genome               ${params.reference}
-    --vcf                VCF to fetch parents from      ${params.vcf}
-    --tmpdir             A temporary directory          ${params.tmpdir}
+    parameters              description                    Set/Default
+    ==========              ===========                    =======
+       
+    --debug                 Set to 'true' to test          ${params.debug}
+    --cores                 Regular job cores              ${params.cores}
+    --out                   Directory to output results    ${params.out}
+    --fqs                   fastq file (see help)          ${params.fqs}
+    --fq_file_prefix        fastq prefix                   ${params.fq_file_prefix}
+    --reference             Reference Genome               ${params.reference}
+    --annotation_reference  SnpEff annotation              ${params.annotation_reference}
+    --bamdir                Location for bams              ${params.bamdir}
+    --tmpdir                A temporary directory          ${params.tmpdir}
 
     HELP: http://andersenlab.org/dry-guide/pipeline-wi/
 
@@ -101,34 +117,38 @@ if (params.reference == "(required)" || params.fqs == "(required)") {
     System.exit(1)
 } 
 
-if (!parental_vcf.exists()) {
-    println """
-
-    Error: VCF Does not exist
-
-    """
-    System.exit(1)
-}
-
-if (!reference_handle.exists()) {
+if (!reference.exists()) {
     println """
 
     Error: Reference does not exist
 
     """
     System.exit(1)
-} 
+}
+
+if (!fq_file.exists()) {
+    println """
+
+    Error: fastq sheet does not exist
+
+    """
+    System.exit(1)
+}
+
 
 
 strainFile = new File(params.fqs)
-fqs = Channel.from(strainFile.collect { it.tokenize( '\t' ) })
+fqs = Channel.from(fq_file.collect { it.tokenize( '\t' ) })
+             .map { SM, ID, LB, fq1, fq2, seq_folder -> [SM, ID, LB, file("${params.fq_file_prefix}/${fq1}"), file("${params.fq_file_prefix}/${fq2}"), seq_folder] }
+
+
 
 /*
     Fastq alignment
 */
 process perform_alignment {
 
-    cpus cores_large
+    cpus params.cores
 
     tag { ID }
 
@@ -139,10 +159,15 @@ process perform_alignment {
 
     
     """
-        bwa mem -t ${alignment_cores} -R '@RG\tID:${ID}\tLB:${LB}\tSM:${SM}' ${reference} ${fq1} ${fq2} | \\
-        sambamba view --nthreads=${alignment_cores} --show-progress --sam-input --format=bam --with-header /dev/stdin | \\
-        sambamba sort --nthreads=${alignment_cores} --show-progress --tmpdir=${tmpdir} --out=${ID}.bam /dev/stdin
-        sambamba index --nthreads=${alignment_cores} ${ID}.bam
+        bwa mem -t ${params.cores} -R '@RG\\tID:${ID}\\tLB:${LB}\\tSM:${SM}' ${reference_handle} ${fq1} ${fq2} | \\
+        sambamba view --nthreads=${params.cores} --show-progress --sam-input --format=bam --with-header /dev/stdin | \\
+        sambamba sort --nthreads=${params.cores} --show-progress --tmpdir=${params.tmpdir} --out=${ID}.bam /dev/stdin
+        sambamba index --nthreads=${params.cores} ${ID}.bam
+
+        if [[ ! \$(samtools view ${ID}.bam | head -n 10) ]]; then
+            exit 1;
+        fi
+
     """
 }
 
@@ -153,7 +178,7 @@ process perform_alignment {
 
 process merge_bam {
 
-    cpus alignment_cores
+    cpus params.cores
 
     tag { SM }
 
@@ -171,12 +196,12 @@ process merge_bam {
         ln -s ${bam.join(" ")} ${SM}.merged.bam
         ln -s ${bam.join(" ")}.bai ${SM}.merged.bam.bai
     else
-        sambamba merge --nthreads=${alignment_cores} --show-progress ${SM}.merged.bam ${bam.join(" ")}
-        sambamba index --nthreads=${alignment_cores} ${SM}.merged.bam
+        sambamba merge --nthreads=${params.cores} --show-progress ${SM}.merged.bam ${bam.join(" ")}
+        sambamba index --nthreads=${params.cores} ${SM}.merged.bam
     fi
 
     picard MarkDuplicates I=${SM}.merged.bam O=${SM}.bam M=${SM}.duplicates.txt VALIDATION_STRINGENCY=SILENT REMOVE_DUPLICATES=false
-    sambamba index --nthreads=${alignment_cores} ${SM}.bam
+    sambamba index --nthreads=${params.cores} ${SM}.bam
     """
 }
 
@@ -193,7 +218,7 @@ SM_bam_set.into {
 
 process bam_publish {
 
-    publishDir SM_alignments_dir + "/WI/isotype", mode: 'copy', pattern: '*.bam*'
+    publishDir params.bamdir + "/WI/isotype", mode: 'copy', pattern: '*.bam*'
 
     input:
         set val(SM), file("${SM}.bam"), file("${SM}.bam.bai") from bam_publish
@@ -201,15 +226,17 @@ process bam_publish {
         set file("${SM}.bam"), file("${SM}.bam.bai")
 
     """
-        echo "Great!"
+        echo "${SM} saved to publish folder"
     """
 }
 
 process convert_to_cram {
 
+    cpus params.cores
+
     tag { SM }
 
-    publishDir SM_alignments_dir + "/WI/isotype_cram", mode: 'copy', pattern: '*.cram*'
+    publishDir params.bamdir + "/WI/isotype_cram", mode: 'copy', pattern: '*.cram*'
 
     input:
         set val(SM), file("${SM}.bam"), file("${SM}.bam.bai") from bam_to_cram
@@ -217,7 +244,7 @@ process convert_to_cram {
         set file("${SM}.cram"), file("${SM}.cram.crai")
 
     """
-        sambamba view --nthreads=${alignment_cores} --format=cram --ref-filename=${reference} --output-filename ${SM}.cram ${SM}.bam 
+        sambamba view --nthreads=${params.cores} --format=cram --ref-filename=${reference_handle} --output-filename ${SM}.cram ${SM}.bam 
         sambamba index --cram-input ${SM}.cram
     """
 }
@@ -238,7 +265,7 @@ process SM_idx_stats {
 
 process SM_combine_idx_stats {
 
-    publishDir analysis_dir + "/isotype", mode: 'copy'
+    publishDir params.out + "/alignment", mode: 'copy'
 
     input:
         val bam_idxstats from bam_idxstats_set.toSortedList()
@@ -273,7 +300,7 @@ process SM_bam_stats {
 
 process combine_SM_bam_stats {
 
-    publishDir analysis_dir + "/SM", mode: 'copy'
+    publishDir params.out + "/alignment", mode: 'copy'
 
     input:
         val stat_files from SM_bam_stat_files.toSortedList()
@@ -283,19 +310,19 @@ process combine_SM_bam_stats {
 
     """
         echo -e "fq_pair_id\\tvariable\\tvalue\\tcomment" > SM_bam_stats.tsv
-        cat ${stat_files.join(" ")} >> SM_bam_stats.tsv
+        cat ${stat_files.join(" ")} >> SM_stats.tsv
     """
 }
 
 process format_duplicates {
 
-    publishDir analysis_dir + "/duplicates", mode: 'copy'
+    publishDir params.out + "/alignment", mode: 'copy'
 
     input:
         val duplicates_set from duplicates_file.toSortedList()
 
     output:
-        file("bam_duplicates.tsv")
+        file("bam_duplicates.tsv") into bam_duplicates_stat
 
 
     """
@@ -329,7 +356,7 @@ process coverage_SM {
 
 process coverage_SM_merge {
 
-    publishDir analysis_dir + "/isotype", mode: 'copy'
+    publishDir params.out + "/alignment", mode: 'copy'
 
     input:
         val sm_set from SM_coverage.toSortedList()
@@ -369,7 +396,7 @@ process combine_telseq {
 
     executor 'local'
 
-    publishDir analysis_dir + "/SM", mode: 'copy'
+    publishDir params.out + "/SM", mode: 'copy'
 
     input:
         file("ind_telseq?.txt") from telseq_results.toSortedList()
@@ -391,7 +418,7 @@ process call_variants_individual {
 
     tag { SM }
 
-    cpus variant_cores
+    cpus params.cores
 
     input:
         set val(SM), file("${SM}.bam"), file("${SM}.bam.bai") from bam_snp_individual
@@ -400,9 +427,8 @@ process call_variants_individual {
         file("${SM}.individual.sites.tsv") into individual_sites
 
     """
-    # Perform individual-level calling
     contigs="`samtools view -H ${SM}.bam | grep -Po 'SN:([^\\W]+)' | cut -c 4-40`"
-    echo \${contigs} | tr ' ' '\\n' | xargs --verbose -I {} -P ${variant_cores} sh -c "samtools mpileup --redo-BAQ -r {} --BCF --output-tags DP,AD,ADF,ADR,SP --fasta-ref ${reference} ${SM}.bam | bcftools call --skip-variants indels --variants-only --multiallelic-caller -O z  -  > ${SM}.{}.individual.vcf.gz"
+    echo \${contigs} | tr ' ' '\\n' | xargs --verbose -I {} -P ${params.cores} sh -c "samtools mpileup --redo-BAQ -r {} --BCF --output-tags DP,AD,ADF,ADR,SP --fasta-ref ${reference_handle} ${SM}.bam | bcftools call --skip-variants indels --variants-only --multiallelic-caller -O z  -  > ${SM}.{}.individual.vcf.gz"
     order=`echo \${contigs} | tr ' ' '\\n' | awk '{ print "${SM}." \$1 ".individual.vcf.gz" }'`
     
     # Output variant sites
@@ -420,22 +446,20 @@ process call_variants_individual {
 
 process merge_variant_list {
 
-    publishDir analysis_dir + "/sitelist", mode: 'copy'
+    publishDir params.out + "/variation", mode: 'copy'
     
     input:
         val sites from individual_sites.toSortedList()
 
     output:
         file("sitelist.tsv.gz") into gz_sitelist
+        file("sitelist.tsv.gz") into sitelist_stat
         file("sitelist.tsv.gz.tbi") into gz_sitelist_index
-        file("sitelist.tsv") into sitelist
-        file("sitelist.count.txt")
 
 
     """
         echo ${sites}
         cat ${sites.join(" ")} | sort -k1,1 -k2,2n | uniq > sitelist.tsv
-        cat sitelist.tsv | wc -l > sitelist.count.txt
         bgzip sitelist.tsv -c > sitelist.tsv.gz && tabix -s1 -b2 -e2 sitelist.tsv.gz
     """
 }
@@ -446,7 +470,7 @@ process call_variants_union {
 
     tag { SM }
 
-    cpus variant_cores
+    cpus params.cores
 
     input:
         set val(SM), file("${SM}.bam"), file("${SM}.bam.bai"), file('sitelist.tsv.gz'), file('sitelist.tsv.gz.tbi') from union_vcf_set
@@ -457,17 +481,18 @@ process call_variants_union {
 
     """
         contigs="`samtools view -H ${SM}.bam | grep -Po 'SN:([^\\W]+)' | cut -c 4-40`"
-        echo \${contigs} | tr ' ' '\\n' | xargs --verbose -I {} -P ${variant_cores} sh -c "samtools mpileup --redo-BAQ -r {} --BCF --output-tags DP,AD,ADF,ADR,INFO/AD,SP --fasta-ref ${reference} ${SM}.bam | bcftools call -T sitelist.tsv.gz --skip-variants indels --multiallelic-caller -O z  -  > ${SM}.{}.union.vcf.gz"
+        echo \${contigs} | tr ' ' '\\n' | xargs --verbose -I {} -P ${params.cores} sh -c "samtools mpileup --redo-BAQ -r {} --BCF --output-tags DP,AD,ADF,ADR,INFO/AD,SP --fasta-ref ${reference_handle} ${SM}.bam | bcftools call -T sitelist.tsv.gz --skip-variants indels --multiallelic-caller -O z  -  > ${SM}.{}.union.vcf.gz"
         order=`echo \${contigs} | tr ' ' '\\n' | awk '{ print "${SM}." \$1 ".union.vcf.gz" }'`
-        # "
+
         # Concatenate and filter
         bcftools concat \${order} -O v | \\
         vk geno het-polarization - | \\
-        bcftools filter -O u --threads ${variant_cores} --mode + --soft-filter quality --include "QUAL >= ${qual} || FORMAT/GT == '0/0'" |  \\
-        bcftools filter -O u --threads ${variant_cores} --mode + --soft-filter min_depth --include "FORMAT/DP > ${min_depth}" | \\
-        bcftools filter -O u --threads ${variant_cores} --mode + --soft-filter mapping_quality --include "INFO/MQ > ${mq}" | \\
-        bcftools filter -O v --threads ${variant_cores} --mode + --soft-filter dv_dp --include "(FORMAT/AD[1])/(FORMAT/DP) >= ${dv_dp} || FORMAT/GT == '0/0'" | \\
+        bcftools filter -O u --threads ${params.cores} --mode + --soft-filter quality --include "QUAL >= ${qual} || FORMAT/GT == '0/0'" |  \\
+        bcftools filter -O u --threads ${params.cores} --mode + --soft-filter min_depth --include "FORMAT/DP > ${min_depth}" | \\
+        bcftools filter -O u --threads ${params.cores} --mode + --soft-filter mapping_quality --include "INFO/MQ > ${mq}" | \\
+        bcftools filter -O v --threads ${params.cores} --mode + --soft-filter dv_dp --include "(FORMAT/AD[1])/(FORMAT/DP) >= ${dv_dp} || FORMAT/GT == '0/0'" | \\
         awk -v OFS="\t" '\$0 ~ "^#" { print } \$0 ~ ":AB" { gsub("PASS","", \$7); if (\$7 == "") { \$7 = "het"; } else { \$7 = \$7 ";het"; } } \$0 !~ "^#" { print }' | \\
+        awk -v OFS="\t" '\$0 ~ "^#CHROM" { print "##FILTER=<ID=het,Description=\\"heterozygous_call_after_het_polarization\\">"; print; } \$0 ~ "^#" && \$0 !~ "^#CHROM" { print } \$0 !~ "^#" { print }' | \\
         vk geno transfer-filter - | \\
         bcftools view -O z > ${SM}.union.vcf.gz
         bcftools index ${SM}.union.vcf.gz
@@ -477,9 +502,9 @@ process call_variants_union {
 
 process generate_union_vcf_list {
 
-    cpus 1 
+    executor 'local'
 
-    publishDir analysis_dir + "/vcf", mode: 'copy'
+    cpus 1 
 
     input:
        val vcf_set from union_vcf_list.toSortedList()
@@ -496,7 +521,7 @@ union_vcfs_in = union_vcfs.spread(contigs)
 
 process merge_union_vcf_chromosome {
 
-    cpus alignment_cores
+    cpus params.cores
 
     tag { chrom }
 
@@ -520,10 +545,7 @@ process concatenate_union_vcf {
 
     echo true
 
-    //publishDir analysis_dir + "/vcf", mode: 'copy'
-
     input:
-        //val chrom from contigs_list_in
         val merge_vcf from raw_vcf.toSortedList()
 
     output:
@@ -539,9 +561,9 @@ process concatenate_union_vcf {
     """
 }
 
+// Generates the initial soft-vcf; but it still
+// needs to be annotated with snpeff and annovar.
 process generate_soft_vcf {
-
-    publishDir analysis_dir + "/vcf", mode: 'copy'
 
     input:
         set file("merged.raw.vcf.gz"), file("merged.raw.vcf.gz.csi") from raw_vcf_concatenated
@@ -549,6 +571,7 @@ process generate_soft_vcf {
     output:
         set file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi") into filtered_vcf
         set val('filtered'), file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi") into filtered_vcf_stat
+        file("WI.${date}.soft-filter.stats.txt") into soft_filter_stats
 
     """
         bcftools view merged.raw.vcf.gz | \\
@@ -566,28 +589,26 @@ process generate_soft_vcf {
 filtered_vcf.into { filtered_vcf_snpeff; filtered_vcf_to_clean; filtered_vcf_gtcheck }
 
 fix_snpeff_script = file("fix_snpeff_names.py")
-/* temp fix */
-gene_pkl = Channel.fromPath("gene.pkl")
 
 process annotate_vcf_snpeff {
 
-    publishDir analysis_dir + "/vcf", mode: 'copy'
-
     input:
         set file("merged.WI.${date}.soft-filter.vcf.gz"), file("merged.WI.${date}.soft-filter.vcf.gz.csi") from filtered_vcf_snpeff
-        file("gene.pkl") from gene_pkl
 
     output:
         set file("WI.${date}.snpeff.vcf.gz"), file("WI.${date}.snpeff.vcf.gz.csi") into snpeff_vcf
 
     """
+        # First run generates the list of gene identifiers
+        setup_annotation_db.sh ${params.annotation_reference}
+        fix_snpeff_names.py
+
         bcftools view -O v merged.WI.${date}.soft-filter.vcf.gz | \\
-        snpEff eff -noInteraction -no-downstream -no-intergenic -no-upstream ${annotation_reference} | \\
+        snpEff eff -noInteraction -no-downstream -no-intergenic -no-upstream ${params.annotation_reference} | \\
         bcftools view -O v | \\
-        python ${fix_snpeff_script} - | \\
+        python `which fix_snpeff_names.py` - | \\
         bcftools view -O z > WI.${date}.snpeff.vcf.gz
         bcftools index WI.${date}.snpeff.vcf.gz
-        bcftools stats --verbose WI.${date}.snpeff.vcf.gz > WI.${date}.snpeff.stats.txt
     """
 
 }
@@ -595,7 +616,9 @@ process annotate_vcf_snpeff {
 
 process generate_hard_vcf {
 
-    publishDir analysis_dir + "/vcf", mode: 'copy'
+    cpus params.cores
+
+    publishDir params.out + "/variation", mode: 'copy'
 
     input:
         set file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi") from filtered_vcf_to_clean
@@ -605,6 +628,9 @@ process generate_hard_vcf {
         set file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") into tajima_bed
         set file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") into vcf_phylo
         set val('clean'), file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") into hard_vcf
+        file("WI.${date}.hard-filter.vcf.gz.tbi")
+        file("WI.${date}.hard-filter.stats.txt") into hard_filter_stats
+
 
     """
         # Generate hard-filtered (clean) vcf
@@ -614,15 +640,16 @@ process generate_hard_vcf {
         vk filter HET --max=0.10 - | \\
         vk filter REF --min=1 - | \\
         vk filter ALT --min=1 - | \\
-        bcftools filter --threads ${variant_cores} --set-GTs . --include "GT != '0/0' & GT != '0/1' & GT != '1/1'" | \\
+        bcftools filter --threads ${params.cores} --set-GTs . --exclude "GT != '0/0' && GT != '1/1'" | \\
         vcffixup - | \\
         bcftools view -O z > WI.${date}.hard-filter.vcf.gz
         bcftools index -f WI.${date}.hard-filter.vcf.gz
+        tabix WI.${date}.hard-filter.vcf.gz
         bcftools stats --verbose WI.${date}.hard-filter.vcf.gz > WI.${date}.hard-filter.stats.txt
     """
 }
 
-hard_vcf.into { hard_vcf_summary }
+hard_vcf.set { hard_vcf_summary }
 
 
 /*
@@ -631,7 +658,7 @@ hard_vcf.into { hard_vcf_summary }
 
 process calculate_hard_vcf_summary {
 
-    publishDir analysis_dir + "/summary", mode: 'copy'
+    publishDir params.out + "/summary", mode: 'copy'
 
     input:
         set val('clean'), file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") from hard_vcf_summary
@@ -658,7 +685,7 @@ process calculate_hard_vcf_summary {
 */
 process phylo_analysis {
 
-    publishDir analysis_dir + "/phylo", mode: "copy"
+    publishDir params.out + "/popgen/trees", mode: "copy"
 
     tag { contig }
 
@@ -672,22 +699,28 @@ process phylo_analysis {
         if [ "${contig}" == "genome" ]
         then
             vk phylo tree nj WI.${date}.hard-filter.vcf.gz > genome.tree
+            if [[ ! genome.tree ]]; then
+                exit 1;
+            fi
         else
             vk phylo tree nj WI.${date}.hard-filter.vcf.gz ${contig} > ${contig}.tree
+            if [[ ! ${contig}.tree ]]; then
+                exit 1;
+            fi
         fi
+
     """
 }
 
-trees_phylo = trees.spread(Channel.fromPath("process_trees.R"))
 
 process plot_trees {
 
-    publishDir analysis_dir + "/phylo", mode: "copy"
+    publishDir params.out + "/popgen/trees", mode: "copy"
 
     tag { contig }
 
     input:
-        set val(contig), file("${contig}.tree"), file("process_trees.R") from trees_phylo
+        set val(contig), file("${contig}.tree") from trees
 
     output:
         file("${contig}.pdf")
@@ -695,14 +728,14 @@ process plot_trees {
 
 
     """
-    Rscript --vanilla process_trees.R ${contig}
+    Rscript --vanilla `which process_trees.R` ${contig}
     """
 
 }
 
 process tajima_bed {
 
-    publishDir analysis_dir + "/tajima", mode: 'copy'
+    publishDir params.out + "/popgen", mode: 'copy'
 
     input:
         set file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") from tajima_bed
@@ -719,19 +752,23 @@ process tajima_bed {
 
 process imputation {
 
-    publishDir analysis_dir + "/vcf", mode: 'copy'
+    cpus params.cores
+    
+    publishDir params.out + "/variation", mode: 'copy'
 
-    cpus variant_cores
 
     input:
         set file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") from hard_vcf_to_impute 
     output:
         set file("WI.${date}.impute.vcf.gz"), file("WI.${date}.impute.vcf.gz.csi") into impute_vcf
-        set val('impute'), file("WI.${date}.impute.vcf.gz"), file("WI.${date}.impute.vcf.gz.csi") into impute_vcf_stat
+        file("WI.${date}.impute.stats.txt") into impute_stats
+        file("WI.${date}.impute.vcf.gz") into filtered_stats
+        file("WI.${date}.impute.vcf.gz.tbi")
 
     """
-        java -jar ${beagle_location} nthreads=${variant_cores} window=8000 overlap=3000 impute=true ne=17500 gt=WI.${date}.hard-filter.vcf.gz out=WI.${date}.impute
-        bcftools index -f WI.${date}.impute.vcf.gz
+        java -jar `which beagle.jar` nthreads=${params.cores} window=8000 overlap=3000 impute=true ne=17500 gt=WI.${date}.hard-filter.vcf.gz out=WI.${date}.impute
+        bcftools index WI.${date}.impute.vcf.gz
+        tabix WI.${date}.impute.vcf.gz
         bcftools stats --verbose WI.${date}.impute.vcf.gz > WI.${date}.impute.stats.txt
     """
 }
@@ -741,7 +778,7 @@ impute_vcf.into { kinship_vcf;  mapping_vcf }
 
 process make_kinship {
 
-    publishDir analysis_dir + "/cegwas", mode: 'copy'
+    publishDir params.out + "/cegwas", mode: 'copy'
 
     input:
         set file("WI.${date}.impute.vcf.gz"), file("WI.${date}.impute.vcf.gz.csi") from kinship_vcf
@@ -750,14 +787,13 @@ process make_kinship {
 
     """
         Rscript -e 'library(cegwas); kinship <- generate_kinship("WI.${date}.impute.vcf.gz"); save(kinship, file = "kinship.Rda");'
-        gsutil cp kinship.Rda gs://elegansvariation.org/releases/${date}/cegwas/kinship.Rda
     """
 
 }
 
 process make_mapping {
 
-    publishDir analysis_dir + "/cegwas", mode: 'copy'
+    publishDir params.out + "/cegwas", mode: 'copy'
 
     input:
         set file("WI.${date}.impute.vcf.gz"), file("WI.${date}.impute.vcf.gz.csi") from mapping_vcf
@@ -766,7 +802,6 @@ process make_mapping {
 
     """
         Rscript -e 'library(cegwas); snps <- generate_mapping("WI.${date}.impute.vcf.gz"); save(snps, file = "snps.Rda");'
-        gsutil cp snps.Rda gs://elegansvariation.org/releases/${date}/cegwas/snps.Rda
     """
 
 }
@@ -774,7 +809,7 @@ process make_mapping {
 
 process calculate_gtcheck {
 
-    publishDir analysis_dir + "/concordance", mode: 'copy'
+    publishDir params.out + "/concordance", mode: 'copy'
 
     input:
         set file("merged.filtered.snp.vcf.gz"), file("merged.filtered.snp.vcf.gz.csi") from filtered_vcf_gtcheck
@@ -789,61 +824,31 @@ process calculate_gtcheck {
 
 }
 
-/* 
-    Stat VCFs
-*/
-
-vcf_stat_set = filtered_vcf_stat.concat( impute_vcf_stat)
-
-/*
-    Stat IMPUTE and CLEAN Here; Final VCF stat'd below
-*/
-
-process stat_tsv {
-
-    tag { vcf_stat }
-
-    publishDir analysis_dir + "/vcf", mode: 'copy'
-
-    input:
-        set val(vcf_stat), file("${vcf_stat}.vcf.gz"), file("${vcf_stat}.vcf.gz.csi") from vcf_stat_set
-
-    output:
-        file("WI.${date}.${vcf_stat}.stats.txt") into filtered_stats
-
-    """
-        bcftools stats --verbose ${vcf_stat}.vcf.gz > WI.${date}.${vcf_stat}.stats.txt
-    """
-
-}
 
 /*
     Perform concordance analysis
 */
 
-concordance_script = Channel.fromPath("process_concordance.R")
-
 process process_concordance_results {
 
 
-    publishDir analysis_dir + "/concordance", mode: "copy"
+    publishDir params.out + "/concordance", mode: "copy"
 
     input:
         file "gtcheck.tsv" from gtcheck
         file "filtered.stats.txt" from filtered_stats
         file "SM_coverage.tsv" from SM_coverage_merged
-        file 'process_concordance.R' from concordance_script
 
     output:
-        file("concordance.svg")
+        file("concordance.pdf")
         file("concordance.png")
-        file("xconcordance.svg")
+        file("xconcordance.pdf")
         file("xconcordance.png")
         file("isotype_groups.tsv")
-        file("gtcheck.tsv") into gtcheck_network
+        file("gtcheck.tsv")
 
     """
-    Rscript --vanilla process_concordance.R
+    Rscript --vanilla `which process_concordance.R`
     """
 
 }
@@ -863,11 +868,11 @@ process download_annotation_files {
     """
 }
 
-phastcons.mix(phylop).into { wig }
+phastcons.mix(phylop).set { wig }
 
 process wig_to_bed {
 
-    publishDir analysis_dir + '/tracks', mode: 'copy'
+    publishDir params.out + '/tracks', mode: 'copy'
 
     input:
         set val(track_name), file("track.wib") from wig
@@ -884,11 +889,11 @@ process wig_to_bed {
 }
 
 
-process soft_filter_vcf {
+process annovar_and_output_soft_filter_vcf {
 
-    publishDir analysis_dir, mode: 'copy'
+    publishDir params.out + "/variation", mode: 'copy'
 
-    cpus alignment_cores
+    cpus params.cores
 
     input:
         set file("WI.${date}.snpeff.vcf.gz"), file("WI.${date}.snpeff.vcf.gz.csi") from snpeff_vcf
@@ -897,13 +902,14 @@ process soft_filter_vcf {
         file('vcf_anno.conf') from Channel.fromPath("vcfanno.conf")
 
     output:
-        set file("WI.${date}.vcf.gz"), file("WI.${date}.vcf.gz.csi"), file("WI.${date}.vcf.gz.tbi") into soft_filter_vcf
+        set file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi"), file("WI.${date}.soft-filter.vcf.gz.tbi") into soft_filter_vcf
         file("WI.${date}.soft-filter.stats.txt")
 
     """
-        vcfanno -p ${alignment_cores} vcf_anno.conf WI.${date}.snpeff.vcf.gz | bcftools view -O z > WI.${date}.vcf.gz
-        bcftools index WI.${date}.vcf.gz
-        tabix WI.${date}.vcf.gz
+        vcfanno -p ${params.cores} vcf_anno.conf WI.${date}.snpeff.vcf.gz | \\
+        bcftools view -O z > WI.${date}.soft-filter.vcf.gz
+        bcftools index WI.${date}.soft-filter.vcf.gz
+        tabix WI.${date}.soft-filter.vcf.gz
         bcftools stats --verbose WI.${date}.soft-filter.vcf.gz > WI.${date}.soft-filter.stats.txt
     """
 
@@ -918,24 +924,26 @@ soft_filter_vcf.into {
 
 
 mod_tracks = Channel.from(["LOW", "MODERATE", "HIGH", "MODIFIER"])
-soft_filter_vcf_mod_tracks.spread(mod_tracks).into { mod_track_set }
+soft_filter_vcf_mod_tracks.spread(mod_tracks).set { mod_track_set }
 
 
 process generate_mod_tracks {
 
-    publishDir analysis_dir + '/tracks', mode: 'copy'
+    publishDir params.out + '/tracks', mode: 'copy'
 
     tag { severity }
 
     input:
         set file("WI.${date}.vcf.gz"), file("WI.${date}.vcf.gz.csi"), file("WI.${date}.vcf.gz.tbi"), val(severity) from mod_track_set
     output:
-        set file("${date}.${severity}.bed"), file("${date}.${severity}.bed.idx")
+        set file("${date}.${severity}.bed.gz"), file("${date}.${severity}.bed.gz.tbi")
 
     """
     bcftools view --apply-filters PASS WI.${date}.vcf.gz | \
     grep ${severity} | \
-    awk '\$0 !~ "^#" { print \$1 "\\t" (\$2 - 1) "\\t" (\$2)  "\\t" \$1 ":" \$2 "\\t0\\t+"  "\\t" \$2 - 1 "\\t" \$2 "\\t0\\t1\\t1\\t0" }'  > ${date}.${severity}.bed && sleep 3 && igvtools index ${date}.${severity}.bed
+    awk '\$0 !~ "^#" { print \$1 "\\t" (\$2 - 1) "\\t" (\$2)  "\\t" \$1 ":" \$2 "\\t0\\t+"  "\\t" \$2 - 1 "\\t" \$2 "\\t0\\t1\\t1\\t0" }' | \\
+    bgzip  > ${date}.${severity}.bed.gz
+    tabix -p bed ${date}.${severity}.bed.gz
     """
 }
 
@@ -961,7 +969,7 @@ isotype_list.splitText() { it.strip() } .spread(soft_filter_vcf_strain).into { i
 
 process generate_isotype_vcf {
 
-    publishDir analysis_dir + '/isotype/vcf', mode: 'copy'
+    publishDir params.out + '/isotype/vcf', mode: 'copy'
 
     tag { isotype }
 
@@ -980,7 +988,7 @@ process generate_isotype_vcf {
 
 process generate_isotype_tsv {
 
-    publishDir analysis_dir + '/isotype/tsv', mode: 'copy'
+    publishDir params.out + '/isotype/tsv', mode: 'copy'
 
     tag { isotype }
 
@@ -988,7 +996,7 @@ process generate_isotype_tsv {
         set val(isotype), file("WI.${date}.vcf.gz"), file("WI.${date}.vcf.gz.csi"), file("WI.${date}.vcf.gz.tbi") from isotype_set_tsv
 
     output:
-        set val(isotype), file("${isotype}.${date}.tsv")
+        set val(isotype), file("${isotype}.${date}.tsv.gz")
 
     """
     echo 'CHROM\\tPOS\\tREF\\tALT\\tFILTER\\tFT\\tGT' > ${isotype}.${date}.tsv
@@ -999,50 +1007,64 @@ process generate_isotype_tsv {
 
 }
 
+vcf_stats = soft_filter_stats.concat( hard_filter_stats, impute_stats )
 
-process generate_tsv {
-
-    publishDir analysis_dir, mode: 'copy'
-
-    input:
-        set file("WI.${date}.vcf.gz"), file("WI.${date}.vcf.gz.csi"), file("WI.${date}.vcf.gz.tbi") from soft_filter_vcf_tsv
-
-    output:
-        file("WI.${date}.soft-filter.tsv.gz") into bq_tsv
-
-    """
-        echo ${CONTIG_LIST.join(" ")} | tr ' ' '\\n' | xargs --verbose -I {} -P ${variant_cores} sh -c "bcftools query --regions {} -f '[%CHROM\\t%POS\\t%SAMPLE\\t%REF\\t%ALT\\t%FILTER\\t%FT\\t%GT\n]' WI.${date}.vcf.gz > {}.tsv"
-        order=`echo ${CONTIG_LIST.join(" ")} | tr ' ' '\\n' | awk '{ print \$1 ".tsv" }'`
-
-        cat <(echo 'CHROM\tPOS\tSAMPLE\tREF\tALT\tFILTER\tFT\tGT') \${order} > WI.${date}.soft-filter.tsv.gz
-        pigz WI.${date}.tsv
-        tabix -s 1 -b 2 -e 2 WI.${date}.soft-filter.tsv.gz
-    """
-}
-
-
-process upload_bq {
+process multiqc_vcf {
 
     executor 'local'
 
+    publishDir params.out + "/report", pattern: '*.html', mode: 'copy'
+
     input:
-        file("WI.${date}.soft-filter.tsv.gz") from bq_tsv
+        file("stat*") from vcf_stats.toSortedList()
+
+    output:
+        file("SNV_report_data/multiqc_bcftools_stats.json") into SNV_report_json
+        file("SNV_report.html") into SNV_report
 
     """
-        gsutil cp WI.${date}.soft-filter.tsv.gz gs://elegansvariation.org/releases/${date}/
-        # Only load if its not been done before
-        if [[ \$(bq ls WI | grep $date | wc -l ) -eq 0 ]]
-        then
-            bq load --field_delimiter "\\t" \
-            --skip_leading_rows 1 \
-            --ignore_unknown_values \
-            andersen-lab:WI.${date}.soft-filter  \
-            gs://elegansvariation.org/releases/${date}/WI.${date}.tsv.gz \
-            CHROM:STRING,POS:INTEGER,SAMPLE:STRING,REF:STRING,ALT:STRING,FILTER:STRING,FT:STRING,GT:STRING
-        fi
+        multiqc -k json --filename SNV_report.html .
+    """
 
+}
+
+process comprehensive_report {
+
+
+    input:
+        file("multiqc_bcftools_stats.json") from SNV_report_json
+        file("sitelist.tsv.gz") from sitelist_stat
 
     """
+        echo "great"
+        exit 0
+    """
+
 }
 
 
+workflow.onComplete {
+
+    summary = """
+
+    Pipeline execution summary
+    ---------------------------
+    Completed at: ${workflow.complete}
+    Duration    : ${workflow.duration}
+    Success     : ${workflow.success}
+    workDir     : ${workflow.workDir}
+    exit status : ${workflow.exitStatus}
+    Error report: ${workflow.errorReport ?: '-'}
+    Git info: $workflow.repository - $workflow.revision [$workflow.commitId]
+
+    """
+
+    println summary
+
+    def outlog = new File("${params.out}/log.txt")
+    outlog.newWriter().withWriter {
+        outlog << param_summary
+        outlog << summary
+    }
+
+}

@@ -90,3 +90,10 @@ ENV/
 
 work/
 .nextflow.log*
+
+.nextflow
+alignments
+analysis
+snpeff
+WI*
+WS2*

@@ -80,7 +80,7 @@ ggplot(gtcheck) +
   geom_histogram(aes(x=concordance, fill = isotype), binwidth = 0.00025) +
   scale_fill_manual(values = c("#808080", "#0080FF"))
 
-ggsave("concordance.svg")
+ggsave("concordance.pdf")
 ggsave("concordance.png")
 
 ggplot(gtcheck) +
@@ -91,7 +91,7 @@ ggplot(gtcheck) +
   geom_vline(aes(xintercept = 0.9993), color = "red") +
   theme(axis.title = ggplot2::element_text(size=14, face="bold", color="black", vjust=5))
 
-ggsave("xconcordance.svg")
+ggsave("xconcordance.pdf")
 ggsave("xconcordance.png")
 
 # Save text files
