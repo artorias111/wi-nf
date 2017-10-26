@@ -653,7 +653,7 @@ process annotate_vcf_snpeff {
     """
         # First run generates the list of gene identifiers
         # If running a docker container, the snpeff database must be built.
-        if [[ "${task.container}" -neq "" ]]; do
+        if [[ "${task.container}" -neq "null" ]]; do
             setup_annotation_db.sh ${params.annotation_reference}
         done;
         fix_snpeff_names.py
