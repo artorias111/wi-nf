@@ -64,7 +64,7 @@ if (params.debug == true) {
     params.fqs = "${workflow.projectDir}/SM_sample_sheet.tsv"
     params.bamdir = "(required)"
     File fq_file = new File("${params.fqs}");
-    params.fq_file_prefix = "";
+    params.fq_file_prefix = null;
 }
 
 
