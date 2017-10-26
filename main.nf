@@ -131,14 +131,14 @@ if (!reference.exists()) {
     System.exit(1)
 }
 
-//if (!fq_file.exists()) {
-//    println """
-//
-//    Error: fastq sheet does not exist
-//
-//    """
-//    System.exit(1)
-//}
+if (!fq_file.exists()) {
+    println """
+
+    Error: fastq sheet does not exist
+
+    """
+    System.exit(1)
+}
 
 
 
