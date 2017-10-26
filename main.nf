@@ -50,8 +50,8 @@ if (params.debug == true) {
 
     """
     params.fqs = "${workflow.projectDir}/test_data/SM_sample_sheet.tsv"
-    params.fq_file_prefix = "${workflow.projectDir}"
     params.bamdir = "${params.out}/bam"
+    params.fq_file_prefix = "${workflow.projectDir}"
 
     // lower filter thresholds
     min_depth=0
@@ -63,10 +63,10 @@ if (params.debug == true) {
     // The SM sheet that is used is located in the root of the git repo
     params.fqs = "${workflow.projectDir}/SM_sample_sheet.tsv"
     params.bamdir = "(required)"
+    params.fq_file_prefix = fq_file.getParentFile().getAbsolutePath();
 }
 
 File fq_file = new File("${params.fqs}");
-params.fq_file_prefix = fq_file.getParentFile().getAbsolutePath();
 
 
 /*
