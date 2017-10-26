@@ -954,11 +954,7 @@ process wig_to_bed {
         file("${track_name}.bed.gz.tbi") into bed_indices
 
     """
-        if [[ "`uname`" -eq "Darwin" ]]; do
-            bigWigToBedGraph_mac track.wib ${track_name}.bed
-        else
-            bigWigToBedGraph track.wib ${track_name}.bed
-        fi;
+        bigWigToBedGraph track.wib ${track_name}.bed
         bgzip ${track_name}.bed
         tabix ${track_name}.bed.gz
     """
