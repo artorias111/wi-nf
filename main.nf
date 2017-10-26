@@ -64,6 +64,7 @@ if (params.debug == true) {
     params.fqs = "${workflow.projectDir}/SM_sample_sheet.tsv"
     params.bamdir = "(required)"
     File fq_file = new File("${params.fqs}");
+    println fq_file
     params.fq_file_prefix = fq_file.getParentFile().getAbsolutePath();
 }
 
