@@ -34,6 +34,7 @@ params.annotation_reference = "WS261"
 params.cores = 4
 params.fq_file_prefix = ""
 params.tmpdir = "tmp/"
+params.email = ""
 File reference = new File("${params.reference}")
 if (params.reference != "(required)") {
    reference_handle = reference.getAbsolutePath();
@@ -1123,6 +1124,9 @@ workflow.onComplete {
     """
 
     println summary
+
+    // mail summary
+    ['mail', '-s', 'wi-nf', params.email].execute() << summary
 
     def outlog = new File("${params.out}/log.txt")
     outlog.newWriter().withWriter {
