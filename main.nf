@@ -32,7 +32,6 @@ params.out = "WI-${date}"
 params.debug = false
 params.annotation_reference = "WS261"
 params.cores = 4
-params.fq_file_prefix = ""
 params.tmpdir = "tmp/"
 params.email = ""
 File reference = new File("${params.reference}")
@@ -51,7 +50,7 @@ if (params.debug == true) {
     """
     params.fqs = "${workflow.projectDir}/test_data/SM_sample_sheet.tsv"
     params.bamdir = "${params.out}/bam"
-    params.fq_file_prefix = "${workflow.projectDir}"
+    params.fq_file_prefix = "${workflow.projectDir}/test_data"
 
     // lower filter thresholds
     min_depth=0
