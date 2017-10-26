@@ -76,8 +76,7 @@ RUN brew install gcc \
             muscle \
             vcfanno \
             igvtools \
-            bamtools \
-            qualimap
+            bamtools
 
 
 RUN brew install fastqc --ignore-dependencies
