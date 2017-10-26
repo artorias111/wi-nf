@@ -582,6 +582,8 @@ process concatenate_union_vcf {
 
     echo true
 
+    cpus params.cores
+
     input:
         val merge_vcf from raw_vcf.toSortedList()
 
@@ -593,7 +595,7 @@ process concatenate_union_vcf {
             ln  -s \${i} `basename \${i}`;
         done;
         chrom_set="";
-        bcftools concat -O z ${contig_raw_vcf.join(" ")}  > merged.raw.vcf.gz
+        bcftools concat --threads ${params.cores} -O z ${contig_raw_vcf.join(" ")}  > merged.raw.vcf.gz
         bcftools index merged.raw.vcf.gz
     """
 }
@@ -601,6 +603,8 @@ process concatenate_union_vcf {
 // Generates the initial soft-vcf; but it still
 // needs to be annotated with snpeff and annovar.
 process generate_soft_vcf {
+
+    cpus params.cores
 
     input:
         set file("merged.raw.vcf.gz"), file("merged.raw.vcf.gz.csi") from raw_vcf_concatenated
@@ -634,6 +638,11 @@ fix_snpeff_script = file("fix_snpeff_names.py")
 
 process annotate_vcf_snpeff {
 
+    cpus params.cores
+
+    errorStrategy 'retry'
+    maxRetries 5
+
     input:
         set file("merged.WI.${date}.soft-filter.vcf.gz"), file("merged.WI.${date}.soft-filter.vcf.gz.csi") from filtered_vcf_snpeff
 
@@ -643,7 +652,10 @@ process annotate_vcf_snpeff {
 
     """
         # First run generates the list of gene identifiers
-        setup_annotation_db.sh ${params.annotation_reference}
+        # If running a docker container, the snpeff database must be built.
+        if [[ "${docker.container}" -neq "" ]]; do
+            setup_annotation_db.sh ${params.annotation_reference}
+        done;
         fix_snpeff_names.py
 
         bcftools view -O v merged.WI.${date}.soft-filter.vcf.gz | \\
@@ -911,7 +923,11 @@ process process_concordance_results {
 }
 
 process download_annotation_files {
+    
     executor 'local'
+
+    errorStrategy 'retry'
+    maxRetries 5
 
     output:
         set val("phastcons"), file("elegans.phastcons.wib") into phastcons
@@ -938,7 +954,11 @@ process wig_to_bed {
         file("${track_name}.bed.gz.tbi") into bed_indices
 
     """
-        bigWigToBedGraph track.wib ${track_name}.bed
+        if [[ "`uname`" -eq "Darwin" ]]; do
+            bigWigToBedGraph_mac track.wib ${track_name}.bed
+        else
+            bigWigToBedGraph track.wib ${track_name}.bed
+        fi;
         bgzip ${track_name}.bed
         tabix ${track_name}.bed.gz
     """
