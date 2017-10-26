@@ -50,6 +50,7 @@ if (params.debug == true) {
     """
     params.fqs = "${workflow.projectDir}/test_data/SM_sample_sheet.tsv"
     params.bamdir = "${params.out}/bam"
+    File fq_file = new File("${params.fqs}");
     params.fq_file_prefix = "${workflow.projectDir}/test_data"
 
     // lower filter thresholds
@@ -62,10 +63,11 @@ if (params.debug == true) {
     // The SM sheet that is used is located in the root of the git repo
     params.fqs = "${workflow.projectDir}/SM_sample_sheet.tsv"
     params.bamdir = "(required)"
+    File fq_file = new File("${params.fqs}");
     params.fq_file_prefix = fq_file.getParentFile().getAbsolutePath();
 }
 
-File fq_file = new File("${params.fqs}");
+
 
 
 /*
@@ -636,7 +638,7 @@ filtered_vcf.into {
 
 fix_snpeff_script = file("fix_snpeff_names.py")
 
-process gene_names {
+process fetch_gene_names {
 
     executor 'local'
 
