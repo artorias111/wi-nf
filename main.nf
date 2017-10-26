@@ -645,6 +645,7 @@ process annotate_vcf_snpeff {
 
     input:
         set file("merged.WI.${date}.soft-filter.vcf.gz"), file("merged.WI.${date}.soft-filter.vcf.gz.csi") from filtered_vcf_snpeff
+        env using_container from docker.enabled
 
     output:
         set file("WI.${date}.snpeff.vcf.gz"), file("WI.${date}.snpeff.vcf.gz.csi") into snpeff_vcf
@@ -653,7 +654,7 @@ process annotate_vcf_snpeff {
     """
         # First run generates the list of gene identifiers
         # If running a docker container, the snpeff database must be built.
-        if [[ "${process.container}" -neq "" ]]; do
+        if [[ "${using_container}" -neq "true" ]]; do
             setup_annotation_db.sh ${params.annotation_reference}
         done;
         fix_snpeff_names.py
