@@ -50,6 +50,7 @@ if (params.debug == true) {
 
     """
     params.fqs = "${workflow.projectDir}/test_data/SM_sample_sheet.tsv"
+    params.fq_file_prefix = "${workflow.projectDir}"
     params.bamdir = "${params.out}/bam"
 
     // lower filter thresholds
