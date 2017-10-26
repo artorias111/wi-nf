@@ -62,10 +62,9 @@ if (params.debug == true) {
 } else {
     // The SM sheet that is used is located in the root of the git repo
     params.bamdir = "(required)"
-    File fq_file = new File(params.fqs);
     params.fq_file_prefix = null;
-    println fq_file
 }
+File fq_file = new File(params.fqs);
 
 
 
