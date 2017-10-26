@@ -76,14 +76,15 @@ RUN brew install gcc \
             muscle \
             vcfanno \
             igvtools \
-            bamtools
+            bamtools \
+            qualimap
 
 
 RUN brew install fastqc --ignore-dependencies
 
 RUN pip2 install numpy cython multiqc
 RUN pip2 install https://github.com/AndersenLab/bam-toolbox/archive/0.0.3.tar.gz vcf-kit \
-    ln /home/linuxbrew/.linuxbrew/bin/python2 /home/linuxbrew/.linuxbrew/bin/python
+    && ln /home/linuxbrew/.linuxbrew/bin/python2 /home/linuxbrew/.linuxbrew/bin/python
 
 # Take over the R lib
 RUN sudo chown -R linuxbrew:linuxbrew /usr/local/
