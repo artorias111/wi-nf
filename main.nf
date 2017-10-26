@@ -636,6 +636,19 @@ filtered_vcf.into {
 
 fix_snpeff_script = file("fix_snpeff_names.py")
 
+process gene_names {
+
+    executor 'local'
+
+    output:
+        file("gene.pkl") into gene_pkl
+
+    """
+    fix_snpeff_names.py
+    """
+
+}
+
 process annotate_vcf_snpeff {
 
     cpus params.cores
@@ -645,6 +658,7 @@ process annotate_vcf_snpeff {
 
     input:
         set file("merged.WI.${date}.soft-filter.vcf.gz"), file("merged.WI.${date}.soft-filter.vcf.gz.csi") from filtered_vcf_snpeff
+        file("gene.pkl") from gene_pkl
 
     output:
         set file("WI.${date}.snpeff.vcf.gz"), file("WI.${date}.snpeff.vcf.gz.csi") into snpeff_vcf
@@ -659,7 +673,6 @@ process annotate_vcf_snpeff {
             if [ "${using_container}" == "true" ]; then
                 setup_annotation_db.sh ${params.annotation_reference}
             fi;
-            fix_snpeff_names.py
 
             bcftools view -O v merged.WI.${date}.soft-filter.vcf.gz | \\
             snpEff eff -csvStats snpeff_out.csv -noInteraction -no-downstream -no-intergenic -no-upstream ${params.annotation_reference} | \\
