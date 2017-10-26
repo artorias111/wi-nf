@@ -32,6 +32,7 @@ params.out = "WI-${date}"
 params.debug = false
 params.annotation_reference = "WS261"
 params.cores = 4
+params.fq_file_prefix = ""
 params.tmpdir = "tmp/"
 File reference = new File("${params.reference}")
 if (params.reference != "(required)") {
@@ -138,8 +139,14 @@ if (!fq_file.exists()) {
 
 
 strainFile = new File(params.fqs)
-fqs = Channel.from(fq_file.collect { it.tokenize( '\t' ) })
-             .map { SM, ID, LB, fq1, fq2, seq_folder -> [SM, ID, LB, file("${params.fq_file_prefix}/${fq1}"), file("${params.fq_file_prefix}/${fq2}"), seq_folder] }
+
+if (params.fq_file_prefix != "") {
+    fqs = Channel.from(fq_file.collect { it.tokenize( '\t' ) })
+                 .map { SM, ID, LB, fq1, fq2, seq_folder -> [SM, ID, LB, file("${params.fq_file_prefix}/${fq1}"), file("${params.fq_file_prefix}/${fq2}"), seq_folder] }
+} else {
+    fqs = Channel.from(fq_file.collect { it.tokenize( '\t' ) })
+                 .map { SM, ID, LB, fq1, fq2, seq_folder -> [SM, ID, LB, file("${fq1}"), file("${fq2}"), seq_folder] }
+}
 
 
 
