@@ -60,8 +60,8 @@ if (params.debug == true) {
     dv_dp=0.0
 
 } else {
+    println "TEST"
     // The SM sheet that is used is located in the root of the git repo
-    params.fqs = "${workflow.projectDir}/SM_sample_sheet.tsv"
     params.bamdir = "(required)"
     File fq_file = new File("${params.fqs}");
     params.fq_file_prefix = null;
