@@ -641,7 +641,7 @@ process annotate_vcf_snpeff {
     cpus params.cores
 
     errorStrategy 'retry'
-    maxRetries 5
+    maxRetries 2
 
     input:
         set file("merged.WI.${date}.soft-filter.vcf.gz"), file("merged.WI.${date}.soft-filter.vcf.gz.csi") from filtered_vcf_snpeff
@@ -650,21 +650,24 @@ process annotate_vcf_snpeff {
         set file("WI.${date}.snpeff.vcf.gz"), file("WI.${date}.snpeff.vcf.gz.csi") into snpeff_vcf
         file("snpeff_out.csv") into snpeff_multiqc
 
-    """
-        # First run generates the list of gene identifiers
-        # If running a docker container, the snpeff database must be built.
-        if [[ "${task.container}" -neq "null" ]]; do
-            setup_annotation_db.sh ${params.annotation_reference}
-        done;
-        fix_snpeff_names.py
+    script:
+        using_container = !(task.container == null)
 
-        bcftools view -O v merged.WI.${date}.soft-filter.vcf.gz | \\
-        snpEff eff -csvStats snpeff_out.csv -noInteraction -no-downstream -no-intergenic -no-upstream ${params.annotation_reference} | \\
-        bcftools view -O v | \\
-        python `which fix_snpeff_names.py` - | \\
-        bcftools view -O z > WI.${date}.snpeff.vcf.gz
-        bcftools index WI.${date}.snpeff.vcf.gz
-    """
+        """
+            # First run generates the list of gene identifiers
+            # If running a docker container, the snpeff database must be built.
+            if [ "${using_container}" == "true" ]; then
+                setup_annotation_db.sh ${params.annotation_reference}
+            fi;
+            fix_snpeff_names.py
+
+            bcftools view -O v merged.WI.${date}.soft-filter.vcf.gz | \\
+            snpEff eff -csvStats snpeff_out.csv -noInteraction -no-downstream -no-intergenic -no-upstream ${params.annotation_reference} | \\
+            bcftools view -O v | \\
+            python `which fix_snpeff_names.py` - | \\
+            bcftools view -O z > WI.${date}.snpeff.vcf.gz
+            bcftools index WI.${date}.snpeff.vcf.gz
+        """
 
 }
 
