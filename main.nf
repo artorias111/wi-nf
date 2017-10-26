@@ -64,6 +64,7 @@ if (params.debug == true) {
     params.bamdir = "(required)"
     File fq_file = new File(params.fqs);
     params.fq_file_prefix = null;
+    println fq_file
 }
 
 
