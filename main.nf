@@ -103,6 +103,7 @@ param_summary = '''
     --annotation_reference  SnpEff annotation              ${params.annotation_reference}
     --bamdir                Location for bams              ${params.bamdir}
     --tmpdir                A temporary directory          ${params.tmpdir}
+    --email                 Email to be sent results       ${params.email}
 
     HELP: http://andersenlab.org/dry-guide/pipeline-wi/
 
