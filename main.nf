@@ -96,7 +96,7 @@ param_summary = '''
     ==========              ===========                    =======
        
     --debug                 Set to 'true' to test          ${params.debug}
-    --cores                 Regular job cores              ${params.cores}
+    --cores                 Regular job cores              ${task.cores}
     --out                   Directory to output results    ${params.out}
     --fqs                   fastq file (see help)          ${params.fqs}
     --fq_file_prefix        fastq prefix                   ${params.fq_file_prefix}
@@ -152,6 +152,52 @@ if (params.fq_file_prefix != "") {
 }
 
 
+fqs.into {
+    fqs_kmer
+    fqs_align
+}
+
+/*
+    Kmer counting
+*/
+process kmer_counting {
+
+    container null
+
+
+    cpus params.cores
+
+    tag { ID }
+
+    input:
+        set SM, ID, LB, fq1, fq2, seq_folder from fqs_kmer
+    output:
+        file("${ID}.kmer.tsv") into kmer_set
+
+    """
+    # fqs will have same number of lines
+    export OFS="\t"
+    fq_wc="`zcat ${fq1} | awk 'NR % 4 == 0' | wc -l`"
+    zcat ${fq1} ${fq2} | fastq-kmers -k 6 | awk -v OFS="\t" -v ID=${ID} -v SM=${SM} -v fq_wc="\${fq_wc}" 'NR > 1 { print \$0, SM, ID, fq_wc }' - > ${ID}.kmer.tsv
+    """
+}
+
+
+process merge_kmer {
+    
+    publishDir params.out + "/phenotype", mode: 'copy'
+
+    input:
+        file("kmer*.tsv") from kmer_set.collect()
+    output:
+        file("kmers.tsv")
+
+    """
+        cat <(echo "kmer\tfrequency\tSM\tID\twc") *.tsv > kmers.tsv
+    """
+
+}
+
 
 /*
     Fastq alignment
@@ -166,16 +212,16 @@ process perform_alignment {
     tag { ID }
 
     input:
-        set SM, ID, LB, fq1, fq2, seq_folder from fqs
+        set SM, ID, LB, fq1, fq2, seq_folder from fqs_align
     output:
         set val(SM), file("${ID}.bam"), file("${ID}.bam.bai") into fq_bam_set
 
     
     """
-        bwa mem -t ${params.cores} -R '@RG\\tID:${ID}\\tLB:${LB}\\tSM:${SM}' ${reference_handle} ${fq1} ${fq2} | \\
-        sambamba view --nthreads=${params.cores} --show-progress --sam-input --format=bam --with-header /dev/stdin | \\
-        sambamba sort --nthreads=${params.cores} --show-progress --tmpdir=${params.tmpdir} --out=${ID}.bam /dev/stdin
-        sambamba index --nthreads=${params.cores} ${ID}.bam
+        bwa mem -t ${task.cores} -R '@RG\\tID:${ID}\\tLB:${LB}\\tSM:${SM}' ${reference_handle} ${fq1} ${fq2} | \\
+        sambamba view --nthreads=${task.cores} --show-progress --sam-input --format=bam --with-header /dev/stdin | \\
+        sambamba sort --nthreads=${task.cores} --show-progress --tmpdir=${params.tmpdir} --out=${ID}.bam /dev/stdin
+        sambamba index --nthreads=${task.cores} ${ID}.bam
 
         if [[ ! \$(samtools view ${ID}.bam | head -n 10) ]]; then
             exit 1;
@@ -208,12 +254,12 @@ process merge_bam {
         ln -s ${bam.join(" ")} ${SM}.merged.bam
         ln -s ${bam.join(" ")}.bai ${SM}.merged.bam.bai
     else
-        sambamba merge --nthreads=${params.cores} --show-progress ${SM}.merged.bam ${bam.join(" ")}
-        sambamba index --nthreads=${params.cores} ${SM}.merged.bam
+        sambamba merge --nthreads=${task.cores} --show-progress ${SM}.merged.bam ${bam.join(" ")}
+        sambamba index --nthreads=${task.cores} ${SM}.merged.bam
     fi
 
     picard MarkDuplicates I=${SM}.merged.bam O=${SM}.bam M=${SM}.picard.sam.markduplicates VALIDATION_STRINGENCY=SILENT REMOVE_DUPLICATES=false
-    sambamba index --nthreads=${params.cores} ${SM}.bam
+    sambamba index --nthreads=${task.cores} ${SM}.bam
     """
 }
 
@@ -249,7 +295,7 @@ process bam_SM_stats {
         samtools stats ${SM}.bam > ${SM}.samtools.txt
         #bamtools stats -in ${SM}.bam > ${SM}.bamtools.txt
         #qualimap bamqc -bam ${SM}.bam -outdir qualimap -outformat HTML
-        fastqc --threads ${params.cores} ${SM}.bam
+        fastqc --threads ${task.cores} ${SM}.bam
         picard CollectAlignmentSummaryMetrics R=${reference_handle} I=${SM}.bam O=${SM}.picard.alignment_metrics.txt
         picard CollectInsertSizeMetrics I=${SM}.bam O=${SM}.picard.insert_metrics.txt H=${SM}.picard.insert_histogram.txt
     """
@@ -286,7 +332,7 @@ process convert_to_cram {
         set file("${SM}.cram"), file("${SM}.cram.crai")
 
     """
-        sambamba view --nthreads=${params.cores} --format=cram --ref-filename=${reference_handle} --output-filename ${SM}.cram ${SM}.bam 
+        sambamba view --nthreads=${task.cores} --format=cram --ref-filename=${reference_handle} --output-filename ${SM}.cram ${SM}.bam 
         sambamba index --cram-input ${SM}.cram
     """
 }
@@ -466,7 +512,7 @@ process call_variants_individual {
 
     """
     contigs="`samtools view -H ${SM}.bam | grep -Po 'SN:([^\\W]+)' | cut -c 4-40`"
-    echo \${contigs} | tr ' ' '\\n' | xargs --verbose -I {} -P ${params.cores} sh -c "samtools mpileup --redo-BAQ -r {} --BCF --output-tags DP,AD,ADF,ADR,SP --fasta-ref ${reference_handle} ${SM}.bam | bcftools call --skip-variants indels --variants-only --multiallelic-caller -O z  -  > ${SM}.{}.individual.vcf.gz"
+    echo \${contigs} | tr ' ' '\\n' | xargs --verbose -I {} -P ${task.cores} sh -c "samtools mpileup --redo-BAQ -r {} --BCF --output-tags DP,AD,ADF,ADR,SP --fasta-ref ${reference_handle} ${SM}.bam | bcftools call --skip-variants indels --variants-only --multiallelic-caller -O z  -  > ${SM}.{}.individual.vcf.gz"
     order=`echo \${contigs} | tr ' ' '\\n' | awk '{ print "${SM}." \$1 ".individual.vcf.gz" }'`
     
     # Output variant sites
@@ -519,16 +565,16 @@ process call_variants_union {
 
     """
         contigs="`samtools view -H ${SM}.bam | grep -Po 'SN:([^\\W]+)' | cut -c 4-40`"
-        echo \${contigs} | tr ' ' '\\n' | xargs --verbose -I {} -P ${params.cores} sh -c "samtools mpileup --redo-BAQ -r {} --BCF --output-tags DP,AD,ADF,ADR,INFO/AD,SP --fasta-ref ${reference_handle} ${SM}.bam | bcftools call -T sitelist.tsv.gz --skip-variants indels --multiallelic-caller -O z  -  > ${SM}.{}.union.vcf.gz"
+        echo \${contigs} | tr ' ' '\\n' | xargs --verbose -I {} -P ${task.cores} sh -c "samtools mpileup --redo-BAQ -r {} --BCF --output-tags DP,AD,ADF,ADR,INFO/AD,SP --fasta-ref ${reference_handle} ${SM}.bam | bcftools call -T sitelist.tsv.gz --skip-variants indels --multiallelic-caller -O z  -  > ${SM}.{}.union.vcf.gz"
         order=`echo \${contigs} | tr ' ' '\\n' | awk '{ print "${SM}." \$1 ".union.vcf.gz" }'`
 
         # Concatenate and filter
         bcftools concat \${order} -O v | \\
         vk geno het-polarization - | \\
-        bcftools filter -O u --threads ${params.cores} --mode + --soft-filter quality --include "QUAL >= ${qual} || FORMAT/GT == '0/0'" |  \\
-        bcftools filter -O u --threads ${params.cores} --mode + --soft-filter min_depth --include "FORMAT/DP > ${min_depth}" | \\
-        bcftools filter -O u --threads ${params.cores} --mode + --soft-filter mapping_quality --include "INFO/MQ > ${mq}" | \\
-        bcftools filter -O v --threads ${params.cores} --mode + --soft-filter dv_dp --include "(FORMAT/AD[1])/(FORMAT/DP) >= ${dv_dp} || FORMAT/GT == '0/0'" | \\
+        bcftools filter -O u --threads ${task.cores} --mode + --soft-filter quality --include "QUAL >= ${qual} || FORMAT/GT == '0/0'" |  \\
+        bcftools filter -O u --threads ${task.cores} --mode + --soft-filter min_depth --include "FORMAT/DP > ${min_depth}" | \\
+        bcftools filter -O u --threads ${task.cores} --mode + --soft-filter mapping_quality --include "INFO/MQ > ${mq}" | \\
+        bcftools filter -O v --threads ${task.cores} --mode + --soft-filter dv_dp --include "(FORMAT/AD[1])/(FORMAT/DP) >= ${dv_dp} || FORMAT/GT == '0/0'" | \\
         awk -v OFS="\t" '\$0 ~ "^#" { print } \$0 ~ ":AB" { gsub("PASS","", \$7); if (\$7 == "") { \$7 = "het"; } else { \$7 = \$7 ";het"; } } \$0 !~ "^#" { print }' | \\
         awk -v OFS="\t" '\$0 ~ "^#CHROM" { print "##FILTER=<ID=het,Description=\\"heterozygous_call_after_het_polarization\\">"; print; } \$0 ~ "^#" && \$0 !~ "^#CHROM" { print } \$0 !~ "^#" { print }' | \\
         vk geno transfer-filter - | \\
@@ -596,7 +642,7 @@ process concatenate_union_vcf {
             ln  -s \${i} `basename \${i}`;
         done;
         chrom_set="";
-        bcftools concat --threads ${params.cores} -O z ${contig_raw_vcf.join(" ")}  > merged.raw.vcf.gz
+        bcftools concat --threads ${task.cores} -O z ${contig_raw_vcf.join(" ")}  > merged.raw.vcf.gz
         bcftools index merged.raw.vcf.gz
     """
 }
@@ -712,7 +758,7 @@ process generate_hard_vcf {
         vk filter HET --max=0.10 - | \\
         vk filter REF --min=1 - | \\
         vk filter ALT --min=1 - | \\
-        bcftools filter --threads ${params.cores} --set-GTs . --exclude "GT != '0/0' && GT != '1/1'" | \\
+        bcftools filter --threads ${task.cores} --set-GTs . --exclude "GT != '0/0' && GT != '1/1'" | \\
         vcffixup - | \\
         bcftools view -O z > WI.${date}.hard-filter.vcf.gz
         bcftools index -f WI.${date}.hard-filter.vcf.gz
@@ -870,7 +916,7 @@ process imputation {
         file("WI.${date}.impute.vcf.gz.tbi")
 
     """
-        java -jar `which beagle.jar` nthreads=${params.cores} window=8000 overlap=3000 impute=true ne=17500 gt=WI.${date}.hard-filter.vcf.gz out=WI.${date}.impute
+        java -jar `which beagle.jar` nthreads=${task.cores} window=8000 overlap=3000 impute=true ne=17500 gt=WI.${date}.hard-filter.vcf.gz out=WI.${date}.impute
         bcftools index WI.${date}.impute.vcf.gz
         tabix WI.${date}.impute.vcf.gz
         bcftools stats --verbose WI.${date}.impute.vcf.gz > WI.${date}.impute.stats.txt
@@ -996,7 +1042,7 @@ process annovar_and_output_soft_filter_vcf {
         file("WI.${date}.soft-filter.stats.txt")
 
     """
-        vcfanno -p ${params.cores} vcf_anno.conf WI.${date}.snpeff.vcf.gz | \\
+        vcfanno -p ${task.cores} vcf_anno.conf WI.${date}.snpeff.vcf.gz | \\
         bcftools view -O z > WI.${date}.soft-filter.vcf.gz
         bcftools index WI.${date}.soft-filter.vcf.gz
         tabix WI.${date}.soft-filter.vcf.gz
