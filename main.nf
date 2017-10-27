@@ -96,7 +96,7 @@ param_summary = '''
     ==========              ===========                    =======
        
     --debug                 Set to 'true' to test          ${params.debug}
-    --cores                 Regular job cores              ${task.cores}
+    --cores                 Regular job cores              ${params.cores}
     --out                   Directory to output results    ${params.out}
     --fqs                   fastq file (see help)          ${params.fqs}
     --fq_file_prefix        fastq prefix                   ${params.fq_file_prefix}
