@@ -286,15 +286,13 @@ process bam_SM_stats {
 
     output:
          file("${SM}.samtools.txt") into SM_samtools_stats_set
-         //file("${SM}.bamtools.txt") into SM_bamtools_stats_set
-         //set file("qualimap/${SM}.genome_results.txt"), file("qualimap/raw_data_qualimapReport/*") into SM_qualimap_stats_set
+         file("${SM}.bamtools.txt") into SM_bamtools_stats_set
          file("${SM}_fastqc.zip") into SM_fastqc_stats_set
          file("${SM}.picard.*") into SM_picard_stats_set
 
     """
         samtools stats ${SM}.bam > ${SM}.samtools.txt
-        #bamtools stats -in ${SM}.bam > ${SM}.bamtools.txt
-        #qualimap bamqc -bam ${SM}.bam -outdir qualimap -outformat HTML
+        bamtools stats -in ${SM}.bam > ${SM}.bamtools.txt
         fastqc --threads ${task.cpus} ${SM}.bam
         picard CollectAlignmentSummaryMetrics R=${reference_handle} I=${SM}.bam O=${SM}.picard.alignment_metrics.txt
         picard CollectInsertSizeMetrics I=${SM}.bam O=${SM}.picard.insert_metrics.txt H=${SM}.picard.insert_histogram.txt
