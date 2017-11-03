@@ -910,7 +910,8 @@ process imputation {
     output:
         set file("WI.${date}.impute.vcf.gz"), file("WI.${date}.impute.vcf.gz.csi") into impute_vcf
         file("WI.${date}.impute.stats.txt") into impute_stats
-        file("WI.${date}.impute.vcf.gz") into filtered_stats
+        file("WI.${date}.impute.stats.txt") into filtered_stats
+        file("WI.${date}.impute.vcf.gz")
         file("WI.${date}.impute.vcf.gz.tbi")
 
     """
