@@ -27,7 +27,7 @@ contigs = Channel.from(CONTIG_LIST)
     Params
 */
 
-date = new Date().format( 'yyyy-MM-dd' )
+date = new Date().format( 'yyyyMMdd' )
 params.out = "WI-${date}"
 params.debug = false
 params.annotation_reference = "WS261"
