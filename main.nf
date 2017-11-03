@@ -891,7 +891,7 @@ process tajima_bed {
         set file("WI.${date}.tajima.bed.gz"), file("WI.${date}.tajima.bed.gz.tbi")
 
     """
-        tajima --no-header 100000 10000 WI.${date}.hard-filter.vcf.gz | bgzip > WI.${date}.tajima.bed.gz
+        vk tajima --no-header 100000 10000 WI.${date}.hard-filter.vcf.gz | bgzip > WI.${date}.tajima.bed.gz
         tabix WI.${date}.tajima.bed.gz
     """
 
