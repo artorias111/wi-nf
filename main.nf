@@ -751,6 +751,7 @@ process generate_hard_vcf {
     """
         # Generate hard-filtered (clean) vcf
         bcftools view --types snps WI.${date}.soft-filter.vcf.gz | \\
+
         bcftools filter --set-GTs . --exclude 'FORMAT/FT != "PASS"' | \\
         vk filter MISSING --max=0.90 - | \\
         vk filter HET --max=0.10 - | \\
@@ -758,7 +759,7 @@ process generate_hard_vcf {
         vk filter ALT --min=1 - | \\
         bcftools filter --threads ${task.cpus} --set-GTs . --exclude "GT != '0/0' && GT != '1/1'" | \\
         vcffixup - | \\
-        bcftools view -O z > WI.${date}.hard-filter.vcf.gz
+        bcftools view --trim-alt-alleles -O z > WI.${date}.hard-filter.vcf.gz
         bcftools index -f WI.${date}.hard-filter.vcf.gz
         tabix WI.${date}.hard-filter.vcf.gz
         bcftools stats --verbose WI.${date}.hard-filter.vcf.gz > WI.${date}.hard-filter.stats.txt
