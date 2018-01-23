@@ -63,6 +63,7 @@ if (params.debug == true) {
     // The SM sheet that is used is located in the root of the git repo
     params.bamdir = "(required)"
     params.fq_file_prefix = null;
+    params.fqs = "SM_sample_sheet.tsv"
 }
 File fq_file = new File(params.fqs);
 
@@ -358,11 +359,11 @@ process SM_combine_idx_stats {
         val bam_idxstats from bam_idxstats_set.toSortedList()
 
     output:
-        file("SM_bam_idxstats.tsv")
+        file("isotype_bam_idxstats.tsv")
 
     """
-        echo -e "SM\\treference\\treference_length\\tmapped_reads\\tunmapped_reads" > SM_bam_idxstats.tsv
-        cat ${bam_idxstats.join(" ")} >> SM_bam_idxstats.tsv
+        echo -e "SM\\treference\\treference_length\\tmapped_reads\\tunmapped_reads" > isotype_bam_idxstats.tsv
+        cat ${bam_idxstats.join(" ")} >> isotype_bam_idxstats.tsv
     """
 }
 
@@ -370,7 +371,7 @@ process SM_combine_idx_stats {
     SM bam stats
 */
 
-process SM_bam_stats {
+process isotype_bam_stats {
 
     tag { SM }
 
@@ -385,7 +386,7 @@ process SM_bam_stats {
     """
 }
 
-process combine_SM_bam_stats {
+process combine_isotype_bam_stats {
 
     publishDir params.out + "/alignment", mode: 'copy'
 
@@ -393,10 +394,10 @@ process combine_SM_bam_stats {
         val stat_files from SM_bam_stat_files.toSortedList()
 
     output:
-        file("SM_bam_stats.tsv")
+        file("isotype_bam_stats.tsv")
 
     """
-        echo -e "fq_pair_id\\tvariable\\tvalue\\tcomment" > SM_bam_stats.tsv
+        echo -e "fq_pair_id\\tvariable\\tvalue\\tcomment" > isotype_bam_stats.tsv
         cat ${stat_files.join(" ")} >> SM_stats.tsv
     """
 }
@@ -412,8 +413,8 @@ process coverage_SM {
         set val(SM), file("${SM}.bam"), file("${SM}.bam.bai") from bam_coverage
 
     output:
-        val SM into SM_coverage_sample
-        file("${SM}.coverage.tsv") into SM_coverage
+        val SM into isotype_coverage_sample
+        file("${SM}.coverage.tsv") into isotype_coverage
 
 
     """
@@ -426,18 +427,18 @@ process coverage_SM_merge {
     publishDir params.out + "/alignment", mode: 'copy'
 
     input:
-        val sm_set from SM_coverage.toSortedList()
+        val sm_set from isotype_coverage.toSortedList()
 
     output:
-        file("SM_coverage.full.tsv") into mt_content
-        file("SM_coverage.tsv") into SM_coverage_merged
+        file("isotype_coverage.full.tsv") into mt_content
+        file("isotype_coverage.tsv") into isotype_coverage_merged
 
     """
-        echo -e 'bam\\tcontig\\tstart\\tend\\tproperty\\tvalue' > SM_coverage.full.tsv
-        cat ${sm_set.join(" ")} >> SM_coverage.full.tsv
+        echo -e 'bam\\tcontig\\tstart\\tend\\tproperty\\tvalue' > isotype_coverage.full.tsv
+        cat ${sm_set.join(" ")} >> isotype_coverage.full.tsv
 
         # Generate condensed version
-        cat <(echo -e 'strain\\tcoverage') <(cat SM_coverage.full.tsv | grep 'genome' | grep 'depth_of_coverage' | cut -f 1,6) > SM_coverage.tsv
+        cat <(echo -e 'strain\\tcoverage') <(cat isotype_coverage.full.tsv | grep 'genome' | grep 'depth_of_coverage' | cut -f 1,6) > isotype_coverage.tsv
     """
 }
 
@@ -446,13 +447,13 @@ process output_mt_content {
     publishDir params.out + "/phenotype", mode: 'copy'
 
     input:
-        file("SM_coverage.full.tsv") from mt_content
+        file("isotype_coverage.full.tsv") from mt_content
 
     output:
         file("MT_content.tsv")
 
     """
-        cat <(echo -e 'isotype\\tmt_content') <(cat SM_coverage.full.tsv | awk '/mt_nuclear_ratio/' | cut -f 1,6) > MT_content.tsv
+        cat <(echo -e 'isotype\\tmt_content') <(cat isotype_coverage.full.tsv | awk '/mt_nuclear_ratio/' | cut -f 1,6) > MT_content.tsv
     """
 }
 
@@ -959,7 +960,6 @@ process make_mapping {
 
 /*
     Perform concordance analysis
-*/
 
 process process_concordance_results {
 
@@ -969,13 +969,13 @@ process process_concordance_results {
     input:
         file "gtcheck.tsv" from gtcheck
         file "filtered.stats.txt" from filtered_stats
-        file "SM_coverage.tsv" from SM_coverage_merged
+        file "isotype_coverage.tsv" from isotype_coverage_merged
 
     output:
         file("concordance.pdf")
         file("concordance.png")
-        file("xconcordance.pdf")
-        file("xconcordance.png")
+        file("concordance_99.pdf")
+        file("concordance_99.png")
         file("isotype_groups.tsv")
         file("gtcheck.tsv")
 
@@ -984,6 +984,7 @@ process process_concordance_results {
     """
 
 }
+*/
 
 process download_annotation_files {
     
