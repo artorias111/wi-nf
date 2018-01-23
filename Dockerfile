@@ -58,7 +58,7 @@ USER linuxbrew
 # Install homebrew files
 RUN brew install gcc \
     && brew install https://raw.githubusercontent.com/Linuxbrew/homebrew-core/043fb1f50af078db481b971d36c605f0dcf72ccd/Formula/jdk.rb \
-    && brew tap homebrew/science \
+    && brew tap brewsci/science \
     && brew install \
             bwa \
             samtools \
@@ -92,7 +92,8 @@ ENV R_LIBS_USER=/usr/local/lib/R/site-library
 RUN echo "r <- getOption('repos'); r['CRAN'] <- 'http://cran.us.r-project.org'; options(repos = r);" > ~/.Rprofile \
     && Rscript -e 'install.packages(c("tidyverse", "cowplot", "ggmap", "ape", "devtools", "knitr", "rmarkdown"))' \
     && Rscript -e 'source("http://bioconductor.org/biocLite.R"); biocLite(c("phyloseq"))' \
-    && Rscript -e 'devtools::install_github("andersenlab/cegwas")'
+    && Rscript -e 'devtools::install_github("andersenlab/cegwas")' \
+    && Rscript -e 'devtools::install_github("danielecook/memoise")'
 
 # Install telseq
 RUN wget -O /home/linuxbrew/.linuxbrew/bin/telseq https://github.com/zd1/telseq/raw/master/bin/ubuntu/telseq  \
