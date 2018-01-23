@@ -76,7 +76,8 @@ RUN brew install gcc \
             muscle \
             vcfanno \
             igvtools \
-            bamtools
+            bamtools \
+            trimmomatic
 
 
 RUN brew install fastqc --ignore-dependencies
