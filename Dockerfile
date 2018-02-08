@@ -91,7 +91,7 @@ RUN sudo chown -R linuxbrew:linuxbrew /usr/local/
 ENV R_LIBS_USER=/usr/local/lib/R/site-library
 # Install R packages and link python
 RUN echo "r <- getOption('repos'); r['CRAN'] <- 'http://cran.us.r-project.org'; options(repos = r);" > ~/.Rprofile \
-    && Rscript -e 'install.packages(c("memoise", "tidyverse", "cowplot", "ggmap", "ape", "devtools", "knitr", "rmarkdown"))' \
+    && Rscript -e 'install.packages(c("memoise", "tidyverse", "cowplot", "ggmap", "ape", "devtools", "knitr", "rmarkdown", "aws.s3"))' \
     && Rscript -e 'source("http://bioconductor.org/biocLite.R"); biocLite(c("phyloseq"))' \
     && Rscript -e 'devtools::install_github("andersenlab/cegwas")'
 
