@@ -3,7 +3,7 @@ FROM linuxbrew/linuxbrew:1.4.3
 USER root 
 # Install latest version of R
 
-RUN apt-get update \ 
+RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ed \
         less \
@@ -33,12 +33,12 @@ ENV LANG en_US.UTF-8
 RUN echo "deb http://http.debian.net/debian sid main" > /etc/apt/sources.list.d/debian-unstable.list \
     && echo 'APT::Default-Release "testing";' > /etc/apt/apt.conf.d/default
 
-ENV R_BASE_VERSION 3.4.2
+ENV R_BASE_VERSION 3.4.3
 
 ## Now install R and littler, and create a link for littler in /usr/local/bin
 ## Also set a default CRAN repo, and make sure littler knows about it too
 RUN apt-get update \
-    && apt-get install -t unstable -y --no-install-recommends --allow-unauthenticated \
+    && apt-get install -t unstable -y --no-install-recommends \
         littler \
                 r-cran-littler \
         r-base=${R_BASE_VERSION}* \
