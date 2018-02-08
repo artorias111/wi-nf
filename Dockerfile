@@ -38,7 +38,7 @@ ENV R_BASE_VERSION 3.4.3
 ## Now install R and littler, and create a link for littler in /usr/local/bin
 ## Also set a default CRAN repo, and make sure littler knows about it too
 RUN apt-get update \
-    && apt-get install -t unstable -y --no-install-recommends \
+    && apt-get install -t unstable -y --no-install-recommends --allow-unauthenticated \
         littler \
                 r-cran-littler \
         r-base=${R_BASE_VERSION}* \
