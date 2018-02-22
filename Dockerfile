@@ -82,7 +82,7 @@ RUN brew install gcc \
 
 RUN brew install fastqc --ignore-dependencies
 
-RUN pip2 install numpy cython multiqc
+RUN pip2 install numpy cython multiqc==1.0
 RUN pip2 install https://github.com/AndersenLab/bam-toolbox/archive/0.0.3.tar.gz vcf-kit \
     && ln /home/linuxbrew/.linuxbrew/bin/python2 /home/linuxbrew/.linuxbrew/bin/python
 
