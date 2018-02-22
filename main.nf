@@ -272,7 +272,6 @@ SM_bam_set.into {
                   bam_snp_individual;
                   bam_snp_union;
                   bam_telseq;
-                  bam_to_cram;
                   bam_SM_stats;
 }
 
@@ -314,25 +313,6 @@ process bam_publish {
 
     """
         echo "${SM} saved to publish folder"
-    """
-}
-
-process convert_to_cram {
-
-    cpus params.cores
-
-    tag { SM }
-
-    publishDir params.bamdir + "/WI/isotype_cram", mode: 'copy', pattern: '*.cram*'
-
-    input:
-        set val(SM), file("${SM}.bam"), file("${SM}.bam.bai") from bam_to_cram
-    output:
-        set file("${SM}.cram"), file("${SM}.cram.crai")
-
-    """
-        sambamba view --nthreads=${task.cpus} --format=cram --ref-filename=${reference_handle} --output-filename ${SM}.cram ${SM}.bam 
-        sambamba index --cram-input ${SM}.cram
     """
 }
 
