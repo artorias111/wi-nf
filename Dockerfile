@@ -68,7 +68,6 @@ RUN brew install gcc \
             sambamba \
             vcflib \
             vcftools \
-            python2 \
             picard-tools \
             pigz \
             parallel \
@@ -77,14 +76,11 @@ RUN brew install gcc \
             vcfanno \
             igvtools \
             bamtools \
-            trimmomatic
+            trimmomatic \
+            pyenv \
+            fastqc --ignore-dependencies
 
-
-RUN brew install fastqc --ignore-dependencies
-
-RUN pip2 install numpy cython multiqc==1.0
-RUN pip2 install https://github.com/AndersenLab/bam-toolbox/archive/0.0.3.tar.gz vcf-kit \
-    && ln /home/linuxbrew/.linuxbrew/bin/python2 /home/linuxbrew/.linuxbrew/bin/python
+RUN bash setup_pyenv.sh
 
 # Take over the R lib
 RUN sudo chown -R linuxbrew:linuxbrew /usr/local/
@@ -98,4 +94,3 @@ RUN echo "r <- getOption('repos'); r['CRAN'] <- 'http://cran.us.r-project.org'; 
 # Install telseq
 RUN wget -O /home/linuxbrew/.linuxbrew/bin/telseq https://github.com/zd1/telseq/raw/master/bin/ubuntu/telseq  \
     && chmod +x /home/linuxbrew/.linuxbrew/bin/telseq
-
