@@ -59,6 +59,7 @@ USER linuxbrew
 RUN brew install gcc \
     && brew install https://raw.githubusercontent.com/Linuxbrew/homebrew-core/043fb1f50af078db481b971d36c605f0dcf72ccd/Formula/jdk.rb \
     && brew tap brewsci/science \
+    && brew tap brewsci/bio \
     && brew install \
             bwa \
             samtools \
