@@ -81,8 +81,6 @@ RUN brew install gcc \
             pyenv \
             fastqc --ignore-dependencies
 
-RUN bash setup_pyenv.sh
-
 # Take over the R lib
 RUN sudo chown -R linuxbrew:linuxbrew /usr/local/
 ENV R_LIBS_USER=/usr/local/lib/R/site-library
@@ -95,3 +93,5 @@ RUN echo "r <- getOption('repos'); r['CRAN'] <- 'http://cran.us.r-project.org'; 
 # Install telseq
 RUN wget -O /home/linuxbrew/.linuxbrew/bin/telseq https://github.com/zd1/telseq/raw/master/bin/ubuntu/telseq  \
     && chmod +x /home/linuxbrew/.linuxbrew/bin/telseq
+
+RUN bash setup_pyenv.sh
