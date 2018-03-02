@@ -5,11 +5,24 @@ USER root
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
+        make \
+        build-essential \
+        libssl-dev \
+        zlib1g-dev \
+        libbz2-dev \
+        libreadline-dev \
+        libsqlite3-dev \
+        wget \
+        curl \
+        llvm \
+        libncurses5-dev \
+        libncursesw5-dev \
+        xz-utils \
+        tk-dev \
         ed \
         less \
         locales \
         vim-tiny \
-        wget \
         ca-certificates \
         fonts-texgyre \
         libxml2-dev \
@@ -19,6 +32,7 @@ RUN apt-get update \
         libmariadb-client-lgpl-dev \
         libpq-dev \
         libssh2-1-dev \
+        libcurl4-openssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
 ## Configure default locale, see https://github.com/rocker-org/rocker/issues/19
@@ -64,6 +78,7 @@ RUN brew install gcc \
             bwa \
             samtools \
             bcftools \
+            gsl \
             bedtools \
             nextflow \
             sambamba \
@@ -79,19 +94,25 @@ RUN brew install gcc \
             bamtools \
             trimmomatic \
             pyenv \
-            fastqc --ignore-dependencies
+            pyenv-virtualenv
+
+RUN brew install fastqc --ignore-dependencies
 
 # Take over the R lib
 RUN sudo chown -R linuxbrew:linuxbrew /usr/local/
 ENV R_LIBS_USER=/usr/local/lib/R/site-library
 # Install R packages and link python
 RUN echo "r <- getOption('repos'); r['CRAN'] <- 'http://cran.us.r-project.org'; options(repos = r);" > ~/.Rprofile \
-    && Rscript -e 'install.packages(c("memoise", "tidyverse", "cowplot", "ggmap", "ape", "devtools", "knitr", "rmarkdown", "aws.s3", "genetics"))' \
-    && Rscript -e 'source("http://bioconductor.org/biocLite.R"); biocLite(c("phyloseq"))' \
-    && Rscript -e 'devtools::install_github("andersenlab/cegwas")'
+    && Rscript -e 'install.packages(c("memoise", "tidyverse", "cowplot", "ggmap", "ape", "devtools", "knitr", "rmarkdown", "aws.s3", "genetics"))'
+RUN Rscript -e 'source("http://bioconductor.org/biocLite.R"); biocLite(c("phyloseq"))'
+RUN Rscript -e 'devtools::install_github("andersenlab/cegwas")'
 
 # Install telseq
 RUN wget -O /home/linuxbrew/.linuxbrew/bin/telseq https://github.com/zd1/telseq/raw/master/bin/ubuntu/telseq  \
     && chmod +x /home/linuxbrew/.linuxbrew/bin/telseq
 
+ADD setup_pyenv.sh setup_pyenv.sh
 RUN bash setup_pyenv.sh
+
+ENV PYENV_ROOT /usr/local/var/pyenv
+ADD bin/init_pyenv.sh /home/linuxbrew/.bashrc

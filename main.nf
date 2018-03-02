@@ -383,6 +383,7 @@ process coverage_SM {
 
 
     """
+        source init_pyenv.sh && pyenv activate vcf-kit
         bam coverage ${SM}.bam > ${SM}.coverage.tsv
     """
 }
@@ -475,7 +476,7 @@ process call_variants_individual {
         file("${SM}.individual.sites.tsv") into individual_sites
 
     """
-    pyenv local vcf-kit
+    source init_pyenv.sh && pyenv activate vcf-kit
     contigs="`samtools view -H ${SM}.bam | grep -Po 'SN:([^\\W]+)' | cut -c 4-40`"
     echo \${contigs} | tr ' ' '\\n' | xargs --verbose -I {} -P ${task.cpus} sh -c "samtools mpileup --redo-BAQ -r {} --BCF --output-tags DP,AD,ADF,ADR,SP --fasta-ref ${reference_handle} ${SM}.bam | bcftools call --skip-variants indels --variants-only --multiallelic-caller -O z  -  > ${SM}.{}.individual.vcf.gz"
     order=`echo \${contigs} | tr ' ' '\\n' | awk '{ print "${SM}." \$1 ".individual.vcf.gz" }'`
@@ -529,7 +530,7 @@ process call_variants_union {
         file("${SM}.union.vcf.gz") into union_vcf_list
 
     """
-        pyenv local vcf-kit
+        source init_pyenv.sh && pyenv activate vcf-kit
         contigs="`samtools view -H ${SM}.bam | grep -Po 'SN:([^\\W]+)' | cut -c 4-40`"
         echo \${contigs} | tr ' ' '\\n' | xargs --verbose -I {} -P ${task.cpus} sh -c "samtools mpileup --redo-BAQ -r {} --BCF --output-tags DP,AD,ADF,ADR,INFO/AD,SP --fasta-ref ${reference_handle} ${SM}.bam | bcftools call -T sitelist.tsv.gz --skip-variants indels --multiallelic-caller -O z  -  > ${SM}.{}.union.vcf.gz"
         order=`echo \${contigs} | tr ' ' '\\n' | awk '{ print "${SM}." \$1 ".union.vcf.gz" }'`
@@ -657,6 +658,7 @@ process fetch_gene_names {
         file("gene.pkl") into gene_pkl
 
     """
+    source init_pyenv.sh && pyenv activate vcf-kit
     fix_snpeff_names.py
     """
 
@@ -717,7 +719,7 @@ process generate_hard_vcf {
 
 
     """
-        pyenv local vcf-kit
+        source init_pyenv.sh && pyenv activate vcf-kit
         # Generate hard-filtered (clean) vcf
         bcftools view --types snps WI.${date}.soft-filter.vcf.gz | \\
 
@@ -764,7 +766,7 @@ process generate_primers {
         file('primers.tsv')
 
     """
-        pyenv local vcf-kit
+        source init_pyenv.sh && pyenv activate vcf-kit
         vk primer snip --ref=WS245 WI.${date}.soft-filter.vcf.gz | gzip > primers.tsv.gz
     """
 
@@ -787,7 +789,7 @@ process calculate_hard_vcf_summary {
         file("WI.${date}.hard-filter.genotypes.frequency.tsv")
 
     """
-    pyenv local vcf-kit
+    source init_pyenv.sh && pyenv activate vcf-kit
     # Calculate singleton freq
     vk calc genotypes WI.${date}.hard-filter.vcf.gz > WI.${date}.hard-filter.genotypes.tsv
     vk calc genotypes --frequency WI.${date}.hard-filter.vcf.gz > WI.${date}.hard-filter.genotypes.frequency.tsv
@@ -816,7 +818,7 @@ process phylo_analysis {
         set val(contig), file("${contig}.tree") into trees
 
     """
-        pyenv local vcf-kit
+        source init_pyenv.sh && pyenv activate vcf-kit
         if [ "${contig}" == "genome" ]
         then
             vk phylo tree nj WI.${date}.hard-filter.vcf.gz > genome.tree
@@ -864,7 +866,7 @@ process tajima_bed {
         set file("WI.${date}.tajima.bed.gz"), file("WI.${date}.tajima.bed.gz.tbi")
 
     """
-        pyenv local vcf-kit
+        source init_pyenv.sh && pyenv activate vcf-kit
         vk tajima --no-header 100000 10000 WI.${date}.hard-filter.vcf.gz | bgzip > WI.${date}.tajima.bed.gz
         tabix WI.${date}.tajima.bed.gz
     """
@@ -1166,7 +1168,7 @@ process multiqc_report {
         file("multiqc.html")
 
     """
-        pyenv local multiqc
+        source init_pyenv.sh && pyenv activate multiqc
         multiqc -k json --filename multiqc.html .
     """
 
