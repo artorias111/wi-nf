@@ -94,7 +94,8 @@ RUN brew install gcc \
             bamtools \
             trimmomatic \
             pyenv \
-            pyenv-virtualenv
+            pyenv-virtualenv \
+            primer3
 
 RUN brew install fastqc --ignore-dependencies
 

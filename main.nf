@@ -628,7 +628,7 @@ process generate_soft_vcf {
         file("WI.${date}.soft-filter.stats.txt") into soft_filter_stats
 
     """
-        pyenv local vcf-kit
+        source init_pyenv.sh && pyenv activate vcf-kit
         bcftools view merged.raw.vcf.gz | \\
         vk filter MISSING --max=0.90 --soft-filter="high_missing" --mode=x - | \
         vk filter HET --max=0.10 --soft-filter="high_heterozygosity" --mode=+ - | \

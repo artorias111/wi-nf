@@ -5,8 +5,8 @@ set -e
 export PYENV_ROOT=/usr/local/var/pyenv
 if which pyenv > /dev/null; then eval "$(pyenv init -)"; fi
 if which pyenv-virtualenv-init > /dev/null; then eval "$(pyenv virtualenv-init -)"; fi
-pyenv install 2.7.11
-pyenv virtualenv 2.7.11 vcf-kit
+pyenv install 2.7.14
+pyenv virtualenv 2.7.14 vcf-kit
 pyenv local vcf-kit
 pip install cython numpy
 pip install vcf-kit
