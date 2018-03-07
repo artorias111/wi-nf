@@ -39,18 +39,18 @@ if (params.debug == true) {
         *** Using debug mode ***
 
     """
-    params.fqs = "${workflow.projectDir}/test_data/SM_sample_sheet.tsv"
+    params.fq_file = "${workflow.projectDir}/test_data/SM_sample_sheet.tsv"
     params.bamdir = "${params.out}/bam"
-    File fq_file = new File(params.fqs);
+    File fq_file = new File(params.fq_file);
     params.fq_file_prefix = "${workflow.projectDir}/test_data"
 
 } else {
     // The SM sheet that is used is located in the root of the git repo
     params.bamdir = "(required)"
     params.fq_file_prefix = null;
-    params.fqs = "SM_sample_sheet.tsv"
+    params.fq_file = "SM_sample_sheet.tsv"
 }
-File fq_file = new File(params.fqs);
+File fq_file = new File(params.fq_file);
 
 
 
@@ -84,7 +84,7 @@ param_summary = '''
     --debug                 Set to 'true' to test          ${params.debug}
     --cores                 Regular job cores              ${params.cores}
     --out                   Directory to output results    ${params.out}
-    --fqs                   fastq file (see help)          ${params.fqs}
+    --fq_file               fastq file (see help)          ${params.fq_file}
     --fq_file_prefix        fastq prefix                   ${params.fq_file_prefix}
     --reference             Reference Genome               ${params.reference}
     --annotation_reference  SnpEff annotation              ${params.annotation_reference}
@@ -98,7 +98,7 @@ param_summary = '''
 
 println param_summary
 
-if (params.reference == "(required)" || params.fqs == "(required)") {
+if (params.reference == "(required)" || params.fq_file == "(required)") {
 
     println """
     The Set/Default column shows what the value is currently set to
@@ -132,7 +132,7 @@ if (!fq_file.exists()) {
 
 
 
-strainFile = new File(params.fqs)
+strainFile = new File(params.fq_file)
 
 if (params.fq_file_prefix != "") {
     fqs = Channel.from(fq_file.collect { it.tokenize( '\t' ) })
