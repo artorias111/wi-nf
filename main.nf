@@ -112,6 +112,11 @@ if (!reference.exists()) {
 
     Error: Reference does not exist
 
+    You can fetch the WS245 with the following two commands:
+
+    curl https://storage.googleapis.com/elegansvariation.org/genome/WS245/WS245.tar.gz > WS245.tar.gz
+    tar -xvzf WS245.tar.gz
+
     """
     System.exit(1)
 }
@@ -212,7 +217,6 @@ process perform_alignment {
         if [[ ! \$(samtools view ${ID}.bam | head -n 10) ]]; then
             exit 1;
         fi
-
     """
 }
 
@@ -274,6 +278,8 @@ process bam_SM_stats {
          file("${SM}.bamtools.txt") into SM_bamtools_stats_set
          file("${SM}_fastqc.zip") into SM_fastqc_stats_set
          file("${SM}.picard.*") into SM_picard_stats_set
+         file("${SM}.bam_idxstats") into bam_idxstats_set
+         file("${SM}.bam_idxstats") into bam_idxstats_multiqc
 
     """
         samtools stats ${SM}.bam > ${SM}.samtools.txt
@@ -281,6 +287,7 @@ process bam_SM_stats {
         fastqc --threads ${task.cpus} ${SM}.bam
         picard CollectAlignmentSummaryMetrics R=${reference_handle} I=${SM}.bam O=${SM}.picard.alignment_metrics.txt
         picard CollectInsertSizeMetrics I=${SM}.bam O=${SM}.picard.insert_metrics.txt H=${SM}.picard.insert_histogram.txt
+        samtools idxstats ${SM}.bam | awk '{ print "${SM}\\t" \$0 }' > ${SM}.bam_idxstats
     """
 
 }
@@ -298,21 +305,6 @@ process bam_publish {
 
     """
         echo "${SM} saved to publish folder"
-    """
-}
-
-process SM_idx_stats {
-
-    tag { SM }
-
-    input:
-        set val(SM), file("${SM}.bam"), file("${SM}.bam.bai") from bam_idxstats
-    output:
-        file("${SM}.bam_idxstats") into bam_idxstats_set
-        file("${SM}.bam_idxstats") into bam_idxstats_multiqc
-
-    """
-        samtools idxstats ${SM}.bam | awk '{ print "${SM}\\t" \$0 }' > ${SM}.bam_idxstats
     """
 }
 
@@ -683,6 +675,7 @@ process annotate_vcf_snpeff {
         using_container = !(task.container == null)
 
         """
+            source init_pyenv.sh && pyenv activate vcf-kit
             # First run generates the list of gene identifiers
             # If running a docker container, the snpeff database must be built.
             if [ "${using_container}" == "true" ]; then
@@ -756,7 +749,7 @@ process calculate_gtcheck {
 
 }
 
-
+/*
 process generate_primers {
 
     input:
@@ -772,6 +765,7 @@ process generate_primers {
 
 
 }
+*/
 
 /*
     Calculate Singletons
@@ -954,10 +948,8 @@ process ibdseq {
         set file("WI.${date}.impute.vcf.gz"), file("WI.${date}.impute.vcf.gz.csi") from haplotype_vcf
 
     output:
-        file("ibd.tsv")
-        file("haplen.png")
-        file("gw_sort.png")
-        file("gw.png")
+        file("haplotype_length.png")
+        file("max_haplotype_sorted_genome_wide.png")
         file("haplotype.png")
         file("sweep_summary.tsv")
         file("processed_haps.Rda")
