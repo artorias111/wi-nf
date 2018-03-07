@@ -522,7 +522,6 @@ process call_variants_union {
         file("${SM}.union.vcf.gz") into union_vcf_list
 
     """
-        source init_pyenv.sh && pyenv activate vcf-kit
         contigs="`samtools view -H ${SM}.bam | grep -Po 'SN:([^\\W]+)' | cut -c 4-40`"
         echo \${contigs} | tr ' ' '\\n' | xargs --verbose -I {} -P ${task.cpus} sh -c "samtools mpileup --redo-BAQ -r {} --BCF --output-tags DP,AD,ADF,ADR,INFO/AD,SP --fasta-ref ${reference_handle} ${SM}.bam | bcftools call -T sitelist.tsv.gz --skip-variants indels --multiallelic-caller -O z  -  > ${SM}.{}.union.vcf.gz"
         order=`echo \${contigs} | tr ' ' '\\n' | awk '{ print "${SM}." \$1 ".union.vcf.gz" }'`
@@ -1207,7 +1206,5 @@ workflow.onComplete {
         outlog << param_summary
         outlog << summary
     }
-
-
 
 }
