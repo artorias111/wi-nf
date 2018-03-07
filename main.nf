@@ -1,20 +1,11 @@
 #!/usr/bin/env nextflow
-/* 
- * Authors: 
+/*
+ * Authors:
  * - Daniel Cook <danielecook@gmail.com>
- *  
+ *
  */
 
 /*
-    Filtering configuration
-*/
-
-min_depth=10
-qual=30
-mq=40
-dv_dp=0.5
-
-/* 
     Globals
 */
 
@@ -48,24 +39,18 @@ if (params.debug == true) {
         *** Using debug mode ***
 
     """
-    params.fqs = "${workflow.projectDir}/test_data/SM_sample_sheet.tsv"
+    params.fq_file = "${workflow.projectDir}/test_data/SM_sample_sheet.tsv"
     params.bamdir = "${params.out}/bam"
-    File fq_file = new File(params.fqs);
+    File fq_file = new File(params.fq_file);
     params.fq_file_prefix = "${workflow.projectDir}/test_data"
-
-    // lower filter thresholds
-    min_depth=0
-    qual=10
-    mq=10
-    dv_dp=0.0
 
 } else {
     // The SM sheet that is used is located in the root of the git repo
     params.bamdir = "(required)"
     params.fq_file_prefix = null;
-    params.fqs = "SM_sample_sheet.tsv"
+    params.fq_file = "SM_sample_sheet.tsv"
 }
-File fq_file = new File(params.fqs);
+File fq_file = new File(params.fq_file);
 
 
 
@@ -78,28 +63,28 @@ File fq_file = new File(params.fqs);
 param_summary = '''
 
 
-     ▄         ▄  ▄▄▄▄▄▄▄▄▄▄▄                         ▄▄        ▄  ▄▄▄▄▄▄▄▄▄▄▄ 
+     ▄         ▄  ▄▄▄▄▄▄▄▄▄▄▄                         ▄▄        ▄  ▄▄▄▄▄▄▄▄▄▄▄
     ▐░▌       ▐░▌▐░░░░░░░░░░░▌                       ▐░░▌      ▐░▌▐░░░░░░░░░░░▌
-    ▐░▌       ▐░▌ ▀▀▀▀█░█▀▀▀▀                        ▐░▌░▌     ▐░▌▐░█▀▀▀▀▀▀▀▀▀ 
-    ▐░▌       ▐░▌     ▐░▌                            ▐░▌▐░▌    ▐░▌▐░▌          
-    ▐░▌   ▄   ▐░▌     ▐░▌           ▄▄▄▄▄▄▄▄▄▄▄      ▐░▌ ▐░▌   ▐░▌▐░█▄▄▄▄▄▄▄▄▄ 
+    ▐░▌       ▐░▌ ▀▀▀▀█░█▀▀▀▀                        ▐░▌░▌     ▐░▌▐░█▀▀▀▀▀▀▀▀▀
+    ▐░▌       ▐░▌     ▐░▌                            ▐░▌▐░▌    ▐░▌▐░▌
+    ▐░▌   ▄   ▐░▌     ▐░▌           ▄▄▄▄▄▄▄▄▄▄▄      ▐░▌ ▐░▌   ▐░▌▐░█▄▄▄▄▄▄▄▄▄
     ▐░▌  ▐░▌  ▐░▌     ▐░▌          ▐░░░░░░░░░░░▌     ▐░▌  ▐░▌  ▐░▌▐░░░░░░░░░░░▌
-    ▐░▌ ▐░▌░▌ ▐░▌     ▐░▌           ▀▀▀▀▀▀▀▀▀▀▀      ▐░▌   ▐░▌ ▐░▌▐░█▀▀▀▀▀▀▀▀▀ 
-    ▐░▌▐░▌ ▐░▌▐░▌     ▐░▌                            ▐░▌    ▐░▌▐░▌▐░▌          
-    ▐░▌░▌   ▐░▐░▌ ▄▄▄▄█░█▄▄▄▄                        ▐░▌     ▐░▐░▌▐░▌          
-    ▐░░▌     ▐░░▌▐░░░░░░░░░░░▌                       ▐░▌      ▐░░▌▐░▌          
-     ▀▀       ▀▀  ▀▀▀▀▀▀▀▀▀▀▀                         ▀        ▀▀  ▀           
-                                                                           
-                                                                    
+    ▐░▌ ▐░▌░▌ ▐░▌     ▐░▌           ▀▀▀▀▀▀▀▀▀▀▀      ▐░▌   ▐░▌ ▐░▌▐░█▀▀▀▀▀▀▀▀▀
+    ▐░▌▐░▌ ▐░▌▐░▌     ▐░▌                            ▐░▌    ▐░▌▐░▌▐░▌
+    ▐░▌░▌   ▐░▐░▌ ▄▄▄▄█░█▄▄▄▄                        ▐░▌     ▐░▐░▌▐░▌
+    ▐░░▌     ▐░░▌▐░░░░░░░░░░░▌                       ▐░▌      ▐░░▌▐░▌
+     ▀▀       ▀▀  ▀▀▀▀▀▀▀▀▀▀▀                         ▀        ▀▀  ▀
+
+
 ''' + """
 
     parameters              description                    Set/Default
     ==========              ===========                    =======
-       
+
     --debug                 Set to 'true' to test          ${params.debug}
     --cores                 Regular job cores              ${params.cores}
     --out                   Directory to output results    ${params.out}
-    --fqs                   fastq file (see help)          ${params.fqs}
+    --fq_file               fastq file (see help)          ${params.fq_file}
     --fq_file_prefix        fastq prefix                   ${params.fq_file_prefix}
     --reference             Reference Genome               ${params.reference}
     --annotation_reference  SnpEff annotation              ${params.annotation_reference}
@@ -113,19 +98,24 @@ param_summary = '''
 
 println param_summary
 
-if (params.reference == "(required)" || params.fqs == "(required)") {
+if (params.reference == "(required)" || params.fq_file == "(required)") {
 
     println """
     The Set/Default column shows what the value is currently set to
     or would be set to if it is not specified (it's default).
     """
     System.exit(1)
-} 
+}
 
 if (!reference.exists()) {
     println """
 
     Error: Reference does not exist
+
+    You can fetch the WS245 with the following two commands:
+
+    curl https://storage.googleapis.com/elegansvariation.org/genome/WS245/WS245.tar.gz > WS245.tar.gz
+    tar -xvzf WS245.tar.gz
 
     """
     System.exit(1)
@@ -142,7 +132,7 @@ if (!fq_file.exists()) {
 
 
 
-strainFile = new File(params.fqs)
+strainFile = new File(params.fq_file)
 
 if (params.fq_file_prefix != "") {
     fqs = Channel.from(fq_file.collect { it.tokenize( '\t' ) })
@@ -185,7 +175,7 @@ process kmer_counting {
 
 
 process merge_kmer {
-    
+
     publishDir params.out + "/phenotype", mode: 'copy'
 
     input:
@@ -217,7 +207,7 @@ process perform_alignment {
     output:
         set val(SM), file("${ID}.bam"), file("${ID}.bam.bai") into fq_bam_set
 
-    
+
     """
         bwa mem -t ${task.cpus} -R '@RG\\tID:${ID}\\tLB:${LB}\\tSM:${SM}' ${reference_handle} ${fq1} ${fq2} | \\
         sambamba view --nthreads=${task.cpus} --show-progress --sam-input --format=bam --with-header /dev/stdin | \\
@@ -227,11 +217,10 @@ process perform_alignment {
         if [[ ! \$(samtools view ${ID}.bam | head -n 10) ]]; then
             exit 1;
         fi
-
     """
 }
 
-/* 
+/*
   Merge - Generate SM Bam
 */
 
@@ -245,9 +234,9 @@ process merge_bam {
         set SM, bam, index from fq_bam_set.groupTuple()
 
     output:
-        set val(SM), file("${SM}.bam"), file("${SM}.bam.bai") into SM_bam_set 
+        set val(SM), file("${SM}.bam"), file("${SM}.bam.bai") into SM_bam_set
         file("${SM}.picard.sam.markduplicates") into duplicates_set
-        
+
     """
     count=`echo ${bam.join(" ")} | tr ' ' '\\n' | wc -l`
 
@@ -264,9 +253,9 @@ process merge_bam {
     """
 }
 
-SM_bam_set.into { 
+SM_bam_set.into {
                   bam_publish;
-                  bam_idxstats; 
+                  bam_idxstats;
                   bam_stats;
                   bam_coverage;
                   bam_snp_individual;
@@ -289,6 +278,8 @@ process bam_SM_stats {
          file("${SM}.bamtools.txt") into SM_bamtools_stats_set
          file("${SM}_fastqc.zip") into SM_fastqc_stats_set
          file("${SM}.picard.*") into SM_picard_stats_set
+         file("${SM}.bam_idxstats") into bam_idxstats_set
+         file("${SM}.bam_idxstats") into bam_idxstats_multiqc
 
     """
         samtools stats ${SM}.bam > ${SM}.samtools.txt
@@ -296,6 +287,7 @@ process bam_SM_stats {
         fastqc --threads ${task.cpus} ${SM}.bam
         picard CollectAlignmentSummaryMetrics R=${reference_handle} I=${SM}.bam O=${SM}.picard.alignment_metrics.txt
         picard CollectInsertSizeMetrics I=${SM}.bam O=${SM}.picard.insert_metrics.txt H=${SM}.picard.insert_histogram.txt
+        samtools idxstats ${SM}.bam | awk '{ print "${SM}\\t" \$0 }' > ${SM}.bam_idxstats
     """
 
 }
@@ -313,21 +305,6 @@ process bam_publish {
 
     """
         echo "${SM} saved to publish folder"
-    """
-}
-
-process SM_idx_stats {
-    
-    tag { SM }
-
-    input:
-        set val(SM), file("${SM}.bam"), file("${SM}.bam.bai") from bam_idxstats
-    output:
-        file("${SM}.bam_idxstats") into bam_idxstats_set
-        file("${SM}.bam_idxstats") into bam_idxstats_multiqc
-
-    """
-        samtools idxstats ${SM}.bam | awk '{ print "${SM}\\t" \$0 }' > ${SM}.bam_idxstats
     """
 }
 
@@ -398,6 +375,7 @@ process coverage_SM {
 
 
     """
+        source init_pyenv.sh && pyenv activate vcf-kit
         bam coverage ${SM}.bam > ${SM}.coverage.tsv
     """
 }
@@ -490,17 +468,18 @@ process call_variants_individual {
         file("${SM}.individual.sites.tsv") into individual_sites
 
     """
+    source init_pyenv.sh && pyenv activate vcf-kit
     contigs="`samtools view -H ${SM}.bam | grep -Po 'SN:([^\\W]+)' | cut -c 4-40`"
     echo \${contigs} | tr ' ' '\\n' | xargs --verbose -I {} -P ${task.cpus} sh -c "samtools mpileup --redo-BAQ -r {} --BCF --output-tags DP,AD,ADF,ADR,SP --fasta-ref ${reference_handle} ${SM}.bam | bcftools call --skip-variants indels --variants-only --multiallelic-caller -O z  -  > ${SM}.{}.individual.vcf.gz"
     order=`echo \${contigs} | tr ' ' '\\n' | awk '{ print "${SM}." \$1 ".individual.vcf.gz" }'`
-    
+
     # Output variant sites
     bcftools concat \${order} -O v | vk geno het-polarization - | bcftools view -O z > ${SM}.individual.vcf.gz
     bcftools index ${SM}.individual.vcf.gz
     rm \${order}
 
     bcftools view -M 2 -m 2 -O v ${SM}.individual.vcf.gz | \\
-    bcftools filter --include 'DP > 3' | \\
+    bcftools filter --include 'DP > ${params.min_depth_individual}' | \\
     egrep '(^#|1/1)' | \\
     bcftools query -f '%CHROM\\t%POS\\t%REF,%ALT\\n' > ${SM}.individual.sites.tsv
 
@@ -510,7 +489,7 @@ process call_variants_individual {
 process merge_variant_list {
 
     publishDir params.out + "/variation", mode: 'copy'
-    
+
     input:
         val sites from individual_sites.toSortedList()
 
@@ -550,12 +529,11 @@ process call_variants_union {
         # Concatenate and filter
         bcftools concat \${order} -O v | \\
         vk geno het-polarization - | \\
-        bcftools filter -O u --threads ${task.cpus} --mode + --soft-filter quality --include "QUAL >= ${qual} || FORMAT/GT == '0/0'" |  \\
-        bcftools filter -O u --threads ${task.cpus} --mode + --soft-filter min_depth --include "FORMAT/DP > ${min_depth}" | \\
-        bcftools filter -O u --threads ${task.cpus} --mode + --soft-filter mapping_quality --include "INFO/MQ > ${mq}" | \\
-        bcftools filter -O v --threads ${task.cpus} --mode + --soft-filter dv_dp --include "(FORMAT/AD[1])/(FORMAT/DP) >= ${dv_dp} || FORMAT/GT == '0/0'" | \\
-        awk -v OFS="\t" '\$0 ~ "^#" { print } \$0 ~ ":AB" { gsub("PASS","", \$7); if (\$7 == "") { \$7 = "het"; } else { \$7 = \$7 ";het"; } } \$0 !~ "^#" { print }' | \\
-        awk -v OFS="\t" '\$0 ~ "^#CHROM" { print "##FILTER=<ID=het,Description=\\"heterozygous_call_after_het_polarization\\">"; print; } \$0 ~ "^#" && \$0 !~ "^#CHROM" { print } \$0 !~ "^#" { print }' | \\
+        bcftools filter -O u --threads ${task.cpus} --mode + --soft-filter quality --include "QUAL >= ${params.qual} || FORMAT/GT == '0/0'" |  \\
+        bcftools filter -O u --threads ${task.cpus} --mode + --soft-filter min_depth --include "FORMAT/DP > ${params.min_depth}" | \\
+        bcftools filter -O u --threads ${task.cpus} --mode + --soft-filter mapping_quality --include "INFO/MQ > ${params.mapping_quality}" | \\
+        bcftools filter -O v --threads ${task.cpus} --mode + --soft-filter dv_dp --include "(FORMAT/AD[*:1])/(FORMAT/DP) >= ${params.dv_dp} || FORMAT/GT == '0/0'" | \\
+        bcftools filter -O v --threads ${task.cpus} --mode + --soft-filter het --exclude "(FORMAT/GT) == 'het'" | \\
         vk geno transfer-filter - | \\
         bcftools view -O z > ${SM}.union.vcf.gz
         bcftools index ${SM}.union.vcf.gz
@@ -567,7 +545,7 @@ process generate_union_vcf_list {
 
     executor 'local'
 
-    cpus 1 
+    cpus 1
 
     input:
        val vcf_set from union_vcf_list.toSortedList()
@@ -641,6 +619,7 @@ process generate_soft_vcf {
         file("WI.${date}.soft-filter.stats.txt") into soft_filter_stats
 
     """
+        source init_pyenv.sh && pyenv activate vcf-kit
         bcftools view merged.raw.vcf.gz | \\
         vk filter MISSING --max=0.90 --soft-filter="high_missing" --mode=x - | \
         vk filter HET --max=0.10 --soft-filter="high_heterozygosity" --mode=+ - | \
@@ -653,9 +632,9 @@ process generate_soft_vcf {
     """
 }
 
-filtered_vcf.into { 
+filtered_vcf.into {
                     filtered_vcf_snpeff;
-                    filtered_vcf_to_clean;
+                    filtered_vcf_to_hard;
                     filtered_vcf_gtcheck;
                     filtered_vcf_primer;
                   }
@@ -670,6 +649,7 @@ process fetch_gene_names {
         file("gene.pkl") into gene_pkl
 
     """
+    source init_pyenv.sh && pyenv activate vcf-kit
     fix_snpeff_names.py
     """
 
@@ -694,6 +674,7 @@ process annotate_vcf_snpeff {
         using_container = !(task.container == null)
 
         """
+            source init_pyenv.sh && pyenv activate vcf-kit
             # First run generates the list of gene identifiers
             # If running a docker container, the snpeff database must be built.
             if [ "${using_container}" == "true" ]; then
@@ -718,7 +699,7 @@ process generate_hard_vcf {
     publishDir params.out + "/variation", mode: 'copy'
 
     input:
-        set file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi") from filtered_vcf_to_clean
+        set file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi") from filtered_vcf_to_hard
 
     output:
         set file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") into hard_vcf_to_impute
@@ -730,15 +711,16 @@ process generate_hard_vcf {
 
 
     """
+        source init_pyenv.sh && pyenv activate vcf-kit
         # Generate hard-filtered (clean) vcf
         bcftools view --types snps WI.${date}.soft-filter.vcf.gz | \\
 
         bcftools filter --set-GTs . --exclude 'FORMAT/FT != "PASS"' | \\
         vk filter MISSING --max=0.90 - | \\
         vk filter HET --max=0.10 - | \\
+        bcftools filter --threads ${task.cpus} --set-GTs . --exclude "(FORMAT/GT) == 'het'" | \\
         vk filter REF --min=1 - | \\
         vk filter ALT --min=1 - | \\
-        bcftools filter --threads ${task.cpus} --set-GTs . --exclude "GT != '0/0' && GT != '1/1'" | \\
         vcffixup - | \\
         bcftools view --trim-alt-alleles -O z > WI.${date}.hard-filter.vcf.gz
         bcftools index -f WI.${date}.hard-filter.vcf.gz
@@ -766,7 +748,7 @@ process calculate_gtcheck {
 
 }
 
-
+/*
 process generate_primers {
 
     input:
@@ -776,11 +758,13 @@ process generate_primers {
         file('primers.tsv')
 
     """
-        vk primer snip --ref=WS245 WI.${date}.soft-filter.vcf.gz > primers.tsv
+        source init_pyenv.sh && pyenv activate vcf-kit
+        vk primer snip --ref=WS245 WI.${date}.soft-filter.vcf.gz | gzip > primers.tsv.gz
     """
 
 
 }
+*/
 
 /*
     Calculate Singletons
@@ -798,6 +782,7 @@ process calculate_hard_vcf_summary {
         file("WI.${date}.hard-filter.genotypes.frequency.tsv")
 
     """
+    source init_pyenv.sh && pyenv activate vcf-kit
     # Calculate singleton freq
     vk calc genotypes WI.${date}.hard-filter.vcf.gz > WI.${date}.hard-filter.genotypes.tsv
     vk calc genotypes --frequency WI.${date}.hard-filter.vcf.gz > WI.${date}.hard-filter.genotypes.frequency.tsv
@@ -826,6 +811,7 @@ process phylo_analysis {
         set val(contig), file("${contig}.tree") into trees
 
     """
+        source init_pyenv.sh && pyenv activate vcf-kit
         if [ "${contig}" == "genome" ]
         then
             vk phylo tree nj WI.${date}.hard-filter.vcf.gz > genome.tree
@@ -873,6 +859,7 @@ process tajima_bed {
         set file("WI.${date}.tajima.bed.gz"), file("WI.${date}.tajima.bed.gz.tbi")
 
     """
+        source init_pyenv.sh && pyenv activate vcf-kit
         vk tajima --no-header 100000 10000 WI.${date}.hard-filter.vcf.gz | bgzip > WI.${date}.tajima.bed.gz
         tabix WI.${date}.tajima.bed.gz
     """
@@ -883,12 +870,12 @@ process tajima_bed {
 process imputation {
 
     cpus params.cores
-    
+
     publishDir params.out + "/variation", mode: 'copy'
 
 
     input:
-        set file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") from hard_vcf_to_impute 
+        set file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") from hard_vcf_to_impute
     output:
         set file("WI.${date}.impute.vcf.gz"), file("WI.${date}.impute.vcf.gz.csi") into impute_vcf
         file("WI.${date}.impute.stats.txt") into impute_stats
@@ -905,7 +892,7 @@ process imputation {
 }
 
 
-impute_vcf.into { kinship_vcf;  mapping_vcf }
+impute_vcf.into { kinship_vcf;  mapping_vcf; haplotype_vcf }
 
 process make_kinship {
 
@@ -922,7 +909,7 @@ process make_kinship {
 
 }
 
-process make_mapping {
+process make_mapping_rda_file {
 
     publishDir params.out + "/cegwas", mode: 'copy'
 
@@ -937,37 +924,61 @@ process make_mapping {
 
 }
 
-
 /*
-    Perform concordance analysis
-
-process process_concordance_results {
-
-
-    publishDir params.out + "/concordance", mode: "copy"
-
-    input:
-        file "gtcheck.tsv" from gtcheck
-        file "filtered.stats.txt" from filtered_stats
-        file "isotype_coverage.tsv" from isotype_coverage_merged
-
-    output:
-        file("concordance.pdf")
-        file("concordance.png")
-        file("concordance_99.pdf")
-        file("concordance_99.png")
-        file("isotype_groups.tsv")
-        file("gtcheck.tsv")
-
-    """
-    Rscript --vanilla `which process_concordance.R`
-    """
-
-}
+    Haplotype analysis
 */
 
+process_ibd=file("process_ibd.R")
+
+minalleles = 0.05 // Species the minimum number of samples carrying the minor allele.
+r2window = 1500 // Specifies the number of markers in the sliding window used to detect correlated markers.
+ibdtrim = 0
+r2max = 0.8
+
+process ibdseq {
+
+    publishDir params.out + "/haplotype", mode: 'copy'
+
+    tag { "ibd" }
+
+    echo true
+
+    input:
+        set file("WI.${date}.impute.vcf.gz"), file("WI.${date}.impute.vcf.gz.csi") from haplotype_vcf
+
+    output:
+        file("haplotype_length.png")
+        file("max_haplotype_sorted_genome_wide.png")
+        file("haplotype.png")
+        file("sweep_summary.tsv")
+        file("processed_haps.Rda")
+
+    """
+    minalleles=\$(bcftools query --list-samples WI.${date}.impute.vcf.gz | wc -l | awk '{ print \$0*${minalleles} }' | awk '{printf("%d\\n", \$0+=\$0<0?0:0.9)}')
+    if [[ \${minalleles} -lt 2 ]];
+    then
+        minalleles=2;
+    fi;
+    echo "minalleles=${minalleles}"
+    for chrom in I II III IV V X; do
+        java -jar `which ibdseq.r1206.jar` \\
+            gt=WI.${date}.impute.vcf.gz \\
+            out=haplotype_\${chrom} \\
+            ibdtrim=${ibdtrim} \\
+            minalleles=\${minalleles} \\
+            r2max=${r2max} \\
+            nthreads=4 \\
+            chrom=\${chrom}
+        done;
+    cat *.ibd | awk '{ print \$0 "\\t${minalleles}\\t${ibdtrim}\\t${r2window}\\t${r2max}" }' > haplotype.tsv
+    Rscript --vanilla `which process_ibd.R`
+    """
+}
+
+
+
 process download_annotation_files {
-    
+
     executor 'local'
 
     errorStrategy 'retry'
@@ -1032,7 +1043,7 @@ process annovar_and_output_soft_filter_vcf {
 
 }
 
-soft_filter_vcf.into { 
+soft_filter_vcf.into {
                         soft_filter_vcf_strain;
                         soft_filter_vcf_isotype_list;
                         soft_filter_vcf_mod_tracks;
@@ -1148,6 +1159,7 @@ process multiqc_report {
         file("multiqc.html")
 
     """
+        source init_pyenv.sh && pyenv activate multiqc
         multiqc -k json --filename multiqc.html .
     """
 
@@ -1194,7 +1206,5 @@ workflow.onComplete {
         outlog << param_summary
         outlog << summary
     }
-
-
 
 }

@@ -1,3 +1,3 @@
 # wi-nf
 
-[Documentation]()
+[Documentation](http://andersenlab.org/dry-guide/pipeline-wi/)
