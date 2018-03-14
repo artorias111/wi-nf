@@ -25,12 +25,23 @@ params.annotation_reference = "WS261"
 params.cores = 4
 params.tmpdir = "tmp/"
 params.email = ""
+
+// Compressed Reference File
 File reference = new File("${params.reference}")
 if (params.reference != "(required)") {
    reference_handle = reference.getAbsolutePath();
 } else {
    reference_handle = "(required)"
 }
+
+//Uncompressed Reference File
+File reference_raw = new File("${params.reference_raw}")
+if (params.reference_raw != "(required)") {
+   reference_handle_raw = reference_raw.getAbsolutePath();
+} else {
+   reference_handle_raw = "(required)"
+}
+
 
 // Debug
 if (params.debug == true) {
@@ -39,18 +50,18 @@ if (params.debug == true) {
         *** Using debug mode ***
 
     """
-    params.fq_file = "${workflow.projectDir}/test_data/SM_sample_sheet.tsv"
+    params.fqs = "${workflow.projectDir}/test_data/SM_sample_sheet.tsv"
     params.bamdir = "${params.out}/bam"
-    File fq_file = new File(params.fq_file);
+    File fq_file = new File(params.fqs);
     params.fq_file_prefix = "${workflow.projectDir}/test_data"
 
 } else {
     // The SM sheet that is used is located in the root of the git repo
     params.bamdir = "(required)"
     params.fq_file_prefix = null;
-    params.fq_file = "SM_sample_sheet.tsv"
+    params.fqs = "SM_sample_sheet.tsv"
 }
-File fq_file = new File(params.fq_file);
+File fq_file = new File(params.fqs);
 
 
 
@@ -84,9 +95,10 @@ param_summary = '''
     --debug                 Set to 'true' to test          ${params.debug}
     --cores                 Regular job cores              ${params.cores}
     --out                   Directory to output results    ${params.out}
-    --fq_file               fastq file (see help)          ${params.fq_file}
+    --fqs                   fastq file (see help)          ${params.fqs}
     --fq_file_prefix        fastq prefix                   ${params.fq_file_prefix}
     --reference             Reference Genome               ${params.reference}
+    --reference_raw         Reference Genome               ${params.reference_raw}
     --annotation_reference  SnpEff annotation              ${params.annotation_reference}
     --bamdir                Location for bams              ${params.bamdir}
     --tmpdir                A temporary directory          ${params.tmpdir}
@@ -98,7 +110,7 @@ param_summary = '''
 
 println param_summary
 
-if (params.reference == "(required)" || params.fq_file == "(required)") {
+if (params.reference == "(required)" || params.fqs == "(required)") {
 
     println """
     The Set/Default column shows what the value is currently set to
@@ -112,10 +124,14 @@ if (!reference.exists()) {
 
     Error: Reference does not exist
 
-    You can fetch the WS245 with the following two commands:
+    """
+    System.exit(1)
+}
 
-    curl https://storage.googleapis.com/elegansvariation.org/genome/WS245/WS245.tar.gz > WS245.tar.gz
-    tar -xvzf WS245.tar.gz
+if (!reference_raw.exists()) {
+    println """
+
+    Error: Reference does not exist
 
     """
     System.exit(1)
@@ -131,8 +147,8 @@ if (!fq_file.exists()) {
 }
 
 
-
-strainFile = new File(params.fq_file)
+// Read sample sheet
+strainFile = new File(params.fqs)
 
 if (params.fq_file_prefix != "") {
     fqs = Channel.from(fq_file.collect { it.tokenize( '\t' ) })
@@ -217,6 +233,7 @@ process perform_alignment {
         if [[ ! \$(samtools view ${ID}.bam | head -n 10) ]]; then
             exit 1;
         fi
+
     """
 }
 
@@ -262,6 +279,10 @@ SM_bam_set.into {
                   bam_snp_union;
                   bam_telseq;
                   bam_SM_stats;
+                  bam_manta;
+                  bam_tiddit;
+                  bam_delly;
+                 bam_delly_recall;
 }
 
 process bam_SM_stats {
@@ -278,8 +299,6 @@ process bam_SM_stats {
          file("${SM}.bamtools.txt") into SM_bamtools_stats_set
          file("${SM}_fastqc.zip") into SM_fastqc_stats_set
          file("${SM}.picard.*") into SM_picard_stats_set
-         file("${SM}.bam_idxstats") into bam_idxstats_set
-         file("${SM}.bam_idxstats") into bam_idxstats_multiqc
 
     """
         samtools stats ${SM}.bam > ${SM}.samtools.txt
@@ -287,7 +306,6 @@ process bam_SM_stats {
         fastqc --threads ${task.cpus} ${SM}.bam
         picard CollectAlignmentSummaryMetrics R=${reference_handle} I=${SM}.bam O=${SM}.picard.alignment_metrics.txt
         picard CollectInsertSizeMetrics I=${SM}.bam O=${SM}.picard.insert_metrics.txt H=${SM}.picard.insert_histogram.txt
-        samtools idxstats ${SM}.bam | awk '{ print "${SM}\\t" \$0 }' > ${SM}.bam_idxstats
     """
 
 }
@@ -305,6 +323,21 @@ process bam_publish {
 
     """
         echo "${SM} saved to publish folder"
+    """
+}
+
+process SM_idx_stats {
+
+    tag { SM }
+
+    input:
+        set val(SM), file("${SM}.bam"), file("${SM}.bam.bai") from bam_idxstats
+    output:
+        file("${SM}.bam_idxstats") into bam_idxstats_set
+        file("${SM}.bam_idxstats") into bam_idxstats_multiqc
+
+    """
+        samtools idxstats ${SM}.bam | awk '{ print "${SM}\\t" \$0 }' > ${SM}.bam_idxstats
     """
 }
 
@@ -375,7 +408,6 @@ process coverage_SM {
 
 
     """
-        source init_pyenv.sh && pyenv activate vcf-kit
         bam coverage ${SM}.bam > ${SM}.coverage.tsv
     """
 }
@@ -452,9 +484,9 @@ process combine_telseq {
 }
 
 /*
-    Call Variants
+    Call Variants - GATK
 */
-
+// Generate SM gVCFs
 process call_variants_individual {
 
     tag { SM }
@@ -465,153 +497,160 @@ process call_variants_individual {
         set val(SM), file("${SM}.bam"), file("${SM}.bam.bai") from bam_snp_individual
 
     output:
-        file("${SM}.individual.sites.tsv") into individual_sites
+        file("${SM}.g.vcf") into individual_sites
+        file("${SM}.g.vcf.idx") into individual_sites_index
 
     """
-    source init_pyenv.sh && pyenv activate vcf-kit
-    contigs="`samtools view -H ${SM}.bam | grep -Po 'SN:([^\\W]+)' | cut -c 4-40`"
-    echo \${contigs} | tr ' ' '\\n' | xargs --verbose -I {} -P ${task.cpus} sh -c "samtools mpileup --redo-BAQ -r {} --BCF --output-tags DP,AD,ADF,ADR,SP --fasta-ref ${reference_handle} ${SM}.bam | bcftools call --skip-variants indels --variants-only --multiallelic-caller -O z  -  > ${SM}.{}.individual.vcf.gz"
-    order=`echo \${contigs} | tr ' ' '\\n' | awk '{ print "${SM}." \$1 ".individual.vcf.gz" }'`
 
-    # Output variant sites
-    bcftools concat \${order} -O v | vk geno het-polarization - | bcftools view -O z > ${SM}.individual.vcf.gz
-    bcftools index ${SM}.individual.vcf.gz
-    rm \${order}
+    function split_gatk() {
+      gatk-launch HaplotypeCaller \\
+            -R ${reference_handle_raw} \\
+            -I ${SM}.bam \\
+            --emit-ref-confidence GVCF \\
+            --sample-ploidy 1 \\
+            --genotyping-mode DISCOVERY \\
+            --max-genotype-count 3000 \\
+            --max-alternate-alleles 100 \\
+            --annotation DepthPerAlleleBySample \\
+            --annotation Coverage \\
+            --annotation GenotypeSummaries \\
+            --annotation TandemRepeat \\
+            --annotation StrandBiasBySample \\
+            --annotation ChromosomeCounts \\
+            --annotation AS_QualByDepth \\
+            --annotation AS_StrandOddsRatio \\
+            --annotation AS_MappingQualityRankSumTest \\
+            --annotation DepthPerSampleHC \\
+            --annotation-group StandardAnnotation \\
+            --annotation-group AS_StandardAnnotation \\
+            --annotation-group StandardHCAnnotation \\
+            -L \${1} \\
+            -O ${SM}_\${1}.g.vcf            
+    }
 
-    bcftools view -M 2 -m 2 -O v ${SM}.individual.vcf.gz | \\
-    bcftools filter --include 'DP > ${params.min_depth_individual}' | \\
-    egrep '(^#|1/1)' | \\
-    bcftools query -f '%CHROM\\t%POS\\t%REF,%ALT\\n' > ${SM}.individual.sites.tsv
+    export -f split_gatk
+
+    parallel --verbose split_gatk {} ::: I II III IV V X MtDNA
+
+    gatk-launch CombineGVCFs \\
+        -R ${reference_handle_raw} \\
+        --variant ${SM}_I.g.vcf \\
+        --variant ${SM}_II.g.vcf \\
+        --variant ${SM}_III.g.vcf \\
+        --variant ${SM}_IV.g.vcf \\
+        --variant ${SM}_V.g.vcf \\
+        --variant ${SM}_X.g.vcf \\
+        --variant ${SM}_MtDNA.g.vcf \\
+        --annotation-group StandardAnnotation \\
+        --annotation-group AS_StandardAnnotation \\
+        -O ${SM}.g.vcf 
+
+    gatk-launch IndexFeatureFile \\
+        -F ${SM}.g.vcf
 
     """
 }
 
-process merge_variant_list {
+// Merge gVCFs
 
-    publishDir params.out + "/variation", mode: 'copy'
+process merge_gvcfs {
+
 
     input:
-        val sites from individual_sites.toSortedList()
+        file gvcfs from individual_sites.toSortedList()
+        file indices from individual_sites_index.toSortedList()
 
     output:
-        file("sitelist.tsv.gz") into gz_sitelist
-        file("sitelist.tsv.gz") into sitelist_stat
-        file("sitelist.tsv.gz.tbi") into gz_sitelist_index
+        set file("wild_isolate.vcf.gz"), file("wild_isolate.vcf.gz.tbi") into wild_isolate_vcf
 
 
     """
-        echo ${sites}
-        cat ${sites.join(" ")} | sort -k1,1 -k2,2n | uniq > sitelist.tsv
-        bgzip sitelist.tsv -c > sitelist.tsv.gz && tabix -s1 -b2 -e2 sitelist.tsv.gz
+    find . -name '*.g.vcf' > input.list
+
+    function combine_gvcfs() {
+    gatk-launch GenomicsDBImport \\
+        -R ${reference_handle_raw} \\
+            -V input.list \\
+            --genomicsdb-workspace-path my_database_\${1} \\
+            -L \${1}
+
+    gatk-launch GenotypeGVCFs \\
+             -R ${reference_handle_raw} \\
+             -new-qual \\
+             -stand-call-conf 0 \\
+            --max-genotype-count 3000 \\
+            --max-alternate-alleles 100 \\
+             --annotation DepthPerAlleleBySample \\
+             --annotation Coverage \\
+             --annotation GenotypeSummaries \\
+             --annotation TandemRepeat \\
+             --annotation StrandBiasBySample \\
+             --annotation ChromosomeCounts \\
+             --annotation AS_QualByDepth \\
+             --annotation AS_StrandOddsRatio \\
+             --annotation AS_MappingQualityRankSumTest \\
+             --annotation DepthPerSampleHC \\
+             --variant gendb://my_database_\${1} \\
+             --annotation-group StandardAnnotation \\
+             --annotation-group AS_StandardAnnotation \\
+             -L \${1} \\
+             -O wild_isolate_\${1}.vcf
+    }
+
+    export -f combine_gvcfs
+
+    parallel --verbose combine_gvcfs {} ::: I II III IV V X MtDNA
+
+    gatk-launch GatherVcfs \\
+        -R ${reference_handle_raw} \\
+        -I wild_isolate_I.vcf \\
+        -I wild_isolate_II.vcf \\
+        -I wild_isolate_III.vcf \\
+        -I wild_isolate_IV.vcf \\
+        -I wild_isolate_V.vcf \\
+        -I wild_isolate_X.vcf \\
+        -I wild_isolate_MtDNA.vcf \\
+        -O wild_isolate.vcf 
+
+    bgzip -c wild_isolate.vcf > wild_isolate.vcf.gz
+    tabix -p vcf wild_isolate.vcf.gz
+
     """
 }
 
-union_vcf_set = bam_snp_union.combine(gz_sitelist).combine(gz_sitelist_index)
-
-process call_variants_union {
-
-    tag { SM }
-
-    cpus params.cores
-
-    input:
-        set val(SM), file("${SM}.bam"), file("${SM}.bam.bai"), file('sitelist.tsv.gz'), file('sitelist.tsv.gz.tbi') from union_vcf_set
-
-    output:
-        val SM into union_vcf_SM
-        file("${SM}.union.vcf.gz") into union_vcf_list
-
-    """
-        contigs="`samtools view -H ${SM}.bam | grep -Po 'SN:([^\\W]+)' | cut -c 4-40`"
-        echo \${contigs} | tr ' ' '\\n' | xargs --verbose -I {} -P ${task.cpus} sh -c "samtools mpileup --redo-BAQ -r {} --BCF --output-tags DP,AD,ADF,ADR,INFO/AD,SP --fasta-ref ${reference_handle} ${SM}.bam | bcftools call -T sitelist.tsv.gz --skip-variants indels --multiallelic-caller -O z  -  > ${SM}.{}.union.vcf.gz"
-        order=`echo \${contigs} | tr ' ' '\\n' | awk '{ print "${SM}." \$1 ".union.vcf.gz" }'`
-
-        # Concatenate and filter
-        bcftools concat \${order} -O v | \\
-        vk geno het-polarization - | \\
-        bcftools filter -O u --threads ${task.cpus} --mode + --soft-filter quality --include "QUAL >= ${params.qual} || FORMAT/GT == '0/0'" |  \\
-        bcftools filter -O u --threads ${task.cpus} --mode + --soft-filter min_depth --include "FORMAT/DP > ${params.min_depth}" | \\
-        bcftools filter -O u --threads ${task.cpus} --mode + --soft-filter mapping_quality --include "INFO/MQ > ${params.mapping_quality}" | \\
-        bcftools filter -O v --threads ${task.cpus} --mode + --soft-filter dv_dp --include "(FORMAT/AD[*:1])/(FORMAT/DP) >= ${params.dv_dp} || FORMAT/GT == '0/0'" | \\
-        bcftools filter -O v --threads ${task.cpus} --mode + --soft-filter het --exclude "(FORMAT/GT) == 'het'" | \\
-        vk geno transfer-filter - | \\
-        bcftools view -O z > ${SM}.union.vcf.gz
-        bcftools index ${SM}.union.vcf.gz
-        rm \${order}
-    """
-}
-
-process generate_union_vcf_list {
-
-    executor 'local'
-
-    cpus 1
-
-    input:
-       val vcf_set from union_vcf_list.toSortedList()
-
-    output:
-       file("union_vcfs.txt") into union_vcfs
-
-    """
-        echo ${vcf_set.join(" ")} | tr ' ' '\\n' > union_vcfs.txt
-    """
-}
-
-union_vcfs_in = union_vcfs.spread(contigs)
-
-process merge_union_vcf_chromosome {
-
-    cpus params.cores
-
-    tag { chrom }
-
-    input:
-        set file(union_vcfs:"union_vcfs.txt"), val(chrom) from union_vcfs_in
-
-    output:
-        val(chrom) into contigs_list_in
-        file("${chrom}.merged.raw.vcf.gz") into raw_vcf
-
-    """
-        bcftools merge --regions ${chrom} -O z -m all --file-list ${union_vcfs} > ${chrom}.merged.raw.vcf.gz
-        bcftools index ${chrom}.merged.raw.vcf.gz
-    """
-}
-
-// Generate a list of ordered files.
-contig_raw_vcf = CONTIG_LIST*.concat(".merged.raw.vcf.gz")
-
-process concatenate_union_vcf {
+process gatk_to_diploid {
 
     echo true
 
-    cpus params.cores
+    publishDir "results/", mode: 'copy'
 
     input:
-        val merge_vcf from raw_vcf.toSortedList()
+      set file("wild_isolate.vcf.gz"), file("wild_isolate.vcf.gz.tbi") from wild_isolate_vcf
 
     output:
-        set file("merged.raw.vcf.gz"), file("merged.raw.vcf.gz.csi") into raw_vcf_concatenated
+      set file("wild_isolate_diploid.vcf.gz"), file("wild_isolate_diploid.vcf.gz.tbi") into wild_isolate_diploid_vcf
+
 
     """
-        for i in ${merge_vcf.join(" ")}; do
-            ln  -s \${i} `basename \${i}`;
-        done;
-        chrom_set="";
-        bcftools concat --threads ${task.cpus} -O z ${contig_raw_vcf.join(" ")}  > merged.raw.vcf.gz
-        bcftools index merged.raw.vcf.gz
+        cat <(bcftools view wild_isolate.vcf.gz | sed 's/\t0:/\t0\\/0:/g' | sed 's/\t1:/\t1\\/1:/g' | sed 's/\t2:/\t2\\/2:/g' | sed 's/\t3:/\t3\\/3:/g' | sed 's/\t4:/\t4\\/4:/g' | sed 's/\t5:/\t5\\/5:/g' | sed 's/\t6:/\t6\\/6:/g' | sed 's/\t7:/\t7\\/7:/g' | sed 's/\t8:/\t8\\/8:/g' | sed 's/\t9:/\t9\\/9:/g' | sed 's/\t.:/\t.\\/.:/g') > wild_isolate_diploid.vcf
+
+        bgzip -c wild_isolate_diploid.vcf > wild_isolate_diploid.vcf.gz
+        tabix -p vcf wild_isolate_diploid.vcf.gz
     """
 }
 
-// Generates the initial soft-vcf; but it still
-// needs to be annotated with snpeff and annovar.
-process generate_soft_vcf {
+// To save some steps in this process we can incorporate TYPE in info field, this will prevent the need to split and apply indel filters 
+
+process apply_filters {
+
+    echo true
+
+    publishDir params.out + "/variation", mode: 'copy'
 
     cpus params.cores
 
     input:
-        set file("merged.raw.vcf.gz"), file("merged.raw.vcf.gz.csi") from raw_vcf_concatenated
+        set file(unionvcf), file(unionvcfindex) from wild_isolate_diploid_vcf
 
     output:
         set file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi") into filtered_vcf
@@ -619,18 +658,63 @@ process generate_soft_vcf {
         file("WI.${date}.soft-filter.stats.txt") into soft_filter_stats
 
     """
-        source init_pyenv.sh && pyenv activate vcf-kit
-        bcftools view merged.raw.vcf.gz | \\
-        vk filter MISSING --max=0.90 --soft-filter="high_missing" --mode=x - | \
-        vk filter HET --max=0.10 --soft-filter="high_heterozygosity" --mode=+ - | \
-        vk filter REF --min=1 - | \
-        vk filter ALT --min=1 - | \
-        vcffixup - | \\
-        bcftools view -O z - > WI.${date}.soft-filter.vcf.gz
+        gatk-launch VariantFiltration \\
+            -R ${reference_handle_raw} \\
+            --variant ${unionvcf} \\
+            --genotype-filter-expression "DP < ${params.min_depth}" \\
+            --genotype-filter-name "depth" \\
+            -O wi_dp.vcf
+
+        bcftools norm -m -any --threads ${task.cpus} -Ov -o wi_norm.vcf wi_dp.vcf
+
+        bcftools view -v indels wi_norm.vcf | \\
+        bcftools filter -O v --threads ${task.cpus} --mode + --soft-filter indelsor --include "INFO/SOR > ${params.sor}" | \\
+        bcftools filter -O z --threads ${task.cpus} --mode + --soft-filter indelqd --include "INFO/QD > ${params.qd}" -o indel_soft_filters.vcf.gz 
+
+        bcftools view -v snps -O z -o snps.vcf.gz wi_norm.vcf
+
+        bcftools index snps.vcf.gz
+        bcftools index indel_soft_filters.vcf.gz
+
+        printf 'indel_soft_filters.vcf.gz\\nsnps.vcf.gz\\n' > tomerge.txt
+
+        bcftools concat -a -f tomerge.txt | \\
+        bcftools filter -O v --threads ${task.cpus} --mode + --soft-filter mapping_quality --include "INFO/MQ > ${params.mapping_quality}" -o snp_indel_soft_filters.vcf
+
+        gatk-launch VariantFiltration \\
+            -R ${reference_handle_raw} \\
+            --variant snp_indel_soft_filters.vcf \\
+            --genotype-filter-expression "((AD[1] / AD[0]) + AD[0]) < ${params.dv_dp}" \\
+            --genotype-filter-name "dv_dp" \\
+            --genotype-filter-expression "QD < 10.0 && AD[1] / (AD[1] + AD[0]) < ${params.dv_dp} && ReadPosRankSum < 0.0" \\
+            --genotype-filter-name "dv_dp_qd_readposranksum" \\
+            -O wi_dv_dp.vcf
+
+        bcftools norm -m +any --threads ${task.cpus} -Ov -o wi_dv_dp_norm.vcf wi_dv_dp.vcf
+
+        gatk-launch VariantFiltration \\
+            -R ${reference_handle_raw} \\
+            --variant wi_dv_dp_norm.vcf \\
+            --filter-expression "QUAL < ${params.qual}" \\
+            --filter-name "quality" \\
+            -O wi_qual.vcf
+
+        bcftools filter --threads ${task.cpus} --mode + --soft-filter high_missing --include "F_MISSING<=${params.missing}" -O z -o WI.${date}.soft-filter.vcf.gz wi_qual.vcf
+
         bcftools index -f WI.${date}.soft-filter.vcf.gz
         bcftools stats --verbose WI.${date}.soft-filter.vcf.gz > WI.${date}.soft-filter.stats.txt
+
+        
+
+        rm wi_norm.vcf
+        rm indel_soft_filters.vcf.gz
+        rm snps.vcf.gz
+        rm snp_indel_soft_filters.vcf
+        
+        rm wi_qual.vcf
     """
 }
+
 
 filtered_vcf.into {
                     filtered_vcf_snpeff;
@@ -638,6 +722,7 @@ filtered_vcf.into {
                     filtered_vcf_gtcheck;
                     filtered_vcf_primer;
                   }
+
 
 fix_snpeff_script = file("fix_snpeff_names.py")
 
@@ -649,11 +734,19 @@ process fetch_gene_names {
         file("gene.pkl") into gene_pkl
 
     """
-    source init_pyenv.sh && pyenv activate vcf-kit
     fix_snpeff_names.py
     """
 
 }
+
+gene_pkl.into {
+                    gene_pkl_snpindel;
+                    gene_pkl_manta;
+                    gene_pkl_delly;
+                    gene_pkl_tiddit;
+                    gene_pkl_cnv;
+                    gene_pkl_svdb;
+                  }
 
 process annotate_vcf_snpeff {
 
@@ -663,8 +756,8 @@ process annotate_vcf_snpeff {
     maxRetries 2
 
     input:
-        set file("merged.WI.${date}.soft-filter.vcf.gz"), file("merged.WI.${date}.soft-filter.vcf.gz.csi") from filtered_vcf_snpeff
-        file("gene.pkl") from gene_pkl
+        set file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi") from filtered_vcf_snpeff
+        file("gene.pkl") from gene_pkl_snpindel
 
     output:
         set file("WI.${date}.snpeff.vcf.gz"), file("WI.${date}.snpeff.vcf.gz.csi") into snpeff_vcf
@@ -674,15 +767,18 @@ process annotate_vcf_snpeff {
         using_container = !(task.container == null)
 
         """
-            source init_pyenv.sh && pyenv activate vcf-kit
             # First run generates the list of gene identifiers
             # If running a docker container, the snpeff database must be built.
             if [ "${using_container}" == "true" ]; then
                 setup_annotation_db.sh ${params.annotation_reference}
             fi;
 
-            bcftools view -O v merged.WI.${date}.soft-filter.vcf.gz | \\
-            snpEff eff -csvStats snpeff_out.csv -noInteraction -no-downstream -no-intergenic -no-upstream ${params.annotation_reference} | \\
+            bcftools view -O v WI.${date}.soft-filter.vcf.gz | \\
+            snpEff eff -csvStats snpeff_out.csv \\
+            -no-downstream -no-intergenic -no-upstream \\
+            -dataDir ${params.snpeff_path} \\
+            -config ${params.snpeff_path}/snpEff.config \\
+            ${params.annotation_reference} | \\
             bcftools view -O v | \\
             python `which fix_snpeff_names.py` - | \\
             bcftools view -O z > WI.${date}.snpeff.vcf.gz
@@ -690,7 +786,6 @@ process annotate_vcf_snpeff {
         """
 
 }
-
 
 process generate_hard_vcf {
 
@@ -711,14 +806,11 @@ process generate_hard_vcf {
 
 
     """
-        source init_pyenv.sh && pyenv activate vcf-kit
         # Generate hard-filtered (clean) vcf
-        bcftools view --types snps WI.${date}.soft-filter.vcf.gz | \\
-
+        bcftools view WI.${date}.soft-filter.vcf.gz | \\
         bcftools filter --set-GTs . --exclude 'FORMAT/FT != "PASS"' | \\
-        vk filter MISSING --max=0.90 - | \\
+        vk filter MISSING --max=${params.missing} - | \\
         vk filter HET --max=0.10 - | \\
-        bcftools filter --threads ${task.cpus} --set-GTs . --exclude "(FORMAT/GT) == 'het'" | \\
         vk filter REF --min=1 - | \\
         vk filter ALT --min=1 - | \\
         vcffixup - | \\
@@ -736,35 +828,17 @@ process calculate_gtcheck {
     publishDir params.out + "/concordance", mode: 'copy'
 
     input:
-        set file("merged.filtered.snp.vcf.gz"), file("merged.filtered.snp.vcf.gz.csi") from filtered_vcf_gtcheck
+        set file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi") from filtered_vcf_gtcheck
 
     output:
         file("gtcheck.tsv") into gtcheck
 
     """
         echo -e "discordance\\tsites\\tavg_min_depth\\ti\\tj" > gtcheck.tsv
-        bcftools gtcheck -H -G 1 merged.filtered.snp.vcf.gz | egrep '^CN' | cut -f 2-6 >> gtcheck.tsv
+        bcftools gtcheck -H -G 1 WI.${date}.soft-filter.vcf.gz | egrep '^CN' | cut -f 2-6 >> gtcheck.tsv
     """
-
 }
 
-/*
-process generate_primers {
-
-    input:
-        set file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi") from filtered_vcf
-
-    output:
-        file('primers.tsv')
-
-    """
-        source init_pyenv.sh && pyenv activate vcf-kit
-        vk primer snip --ref=WS245 WI.${date}.soft-filter.vcf.gz | gzip > primers.tsv.gz
-    """
-
-
-}
-*/
 
 /*
     Calculate Singletons
@@ -782,16 +856,15 @@ process calculate_hard_vcf_summary {
         file("WI.${date}.hard-filter.genotypes.frequency.tsv")
 
     """
-    source init_pyenv.sh && pyenv activate vcf-kit
-    # Calculate singleton freq
-    vk calc genotypes WI.${date}.hard-filter.vcf.gz > WI.${date}.hard-filter.genotypes.tsv
-    vk calc genotypes --frequency WI.${date}.hard-filter.vcf.gz > WI.${date}.hard-filter.genotypes.frequency.tsv
+        # Calculate singleton freq
+        vk calc genotypes WI.${date}.hard-filter.vcf.gz > WI.${date}.hard-filter.genotypes.tsv
+        vk calc genotypes --frequency WI.${date}.hard-filter.vcf.gz > WI.${date}.hard-filter.genotypes.frequency.tsv
 
-    # Calculate average discordance; Determine most diverged strains
-    awk '\$0 ~ "^CN" { print 1-(\$2/\$3) "\t" \$5 "\n" 1-(\$2/\$3) "\t" \$6 }' | \
-    sort -k 2 | \
-    datamash mean 1 --group 2 | \
-    sort -k2,2n > WI.${date}.hard-filter.avg_concordance.tsv
+        # Calculate average discordance; Determine most diverged strains
+        awk '\$0 ~ "^CN" { print 1-(\$2/\$3) "\t" \$5 "\n" 1-(\$2/\$3) "\t" \$6 }' | \
+        sort -k 2 | \
+        datamash mean 1 --group 2 | \
+        sort -k2,2n > WI.${date}.hard-filter.avg_concordance.tsv
     """
 }
 
@@ -828,7 +901,6 @@ process phylo_analysis {
     """
 }
 
-
 process plot_trees {
 
     publishDir params.out + "/popgen/trees", mode: "copy"
@@ -844,7 +916,7 @@ process plot_trees {
 
 
     """
-    Rscript --vanilla `which process_trees.R` ${contig}
+        Rscript --vanilla `which process_trees.R` ${contig}
     """
 
 }
@@ -859,13 +931,11 @@ process tajima_bed {
         set file("WI.${date}.tajima.bed.gz"), file("WI.${date}.tajima.bed.gz.tbi")
 
     """
-        source init_pyenv.sh && pyenv activate vcf-kit
         vk tajima --no-header 100000 10000 WI.${date}.hard-filter.vcf.gz | bgzip > WI.${date}.tajima.bed.gz
         tabix WI.${date}.tajima.bed.gz
     """
 
 }
-
 
 process imputation {
 
@@ -884,13 +954,12 @@ process imputation {
         file("WI.${date}.impute.vcf.gz.tbi")
 
     """
-        java -jar `which beagle.jar` nthreads=${task.cpus} window=8000 overlap=3000 impute=true ne=17500 gt=WI.${date}.hard-filter.vcf.gz out=WI.${date}.impute
+        beagle nthreads=${task.cpus} window=8000 overlap=3000 impute=true ne=17500 gt=WI.${date}.hard-filter.vcf.gz out=WI.${date}.impute
         bcftools index WI.${date}.impute.vcf.gz
         tabix WI.${date}.impute.vcf.gz
         bcftools stats --verbose WI.${date}.impute.vcf.gz > WI.${date}.impute.stats.txt
     """
 }
-
 
 impute_vcf.into { kinship_vcf;  mapping_vcf; haplotype_vcf }
 
@@ -922,57 +991,6 @@ process make_mapping_rda_file {
         Rscript -e 'library(cegwas); snps <- generate_mapping("WI.${date}.impute.vcf.gz"); save(snps, file = "snps.Rda");'
     """
 
-}
-
-/*
-    Haplotype analysis
-*/
-
-process_ibd=file("process_ibd.R")
-
-minalleles = 0.05 // Species the minimum number of samples carrying the minor allele.
-r2window = 1500 // Specifies the number of markers in the sliding window used to detect correlated markers.
-ibdtrim = 0
-r2max = 0.8
-
-process ibdseq {
-
-    publishDir params.out + "/haplotype", mode: 'copy'
-
-    tag { "ibd" }
-
-    echo true
-
-    input:
-        set file("WI.${date}.impute.vcf.gz"), file("WI.${date}.impute.vcf.gz.csi") from haplotype_vcf
-
-    output:
-        file("haplotype_length.png")
-        file("max_haplotype_sorted_genome_wide.png")
-        file("haplotype.png")
-        file("sweep_summary.tsv")
-        file("processed_haps.Rda")
-
-    """
-    minalleles=\$(bcftools query --list-samples WI.${date}.impute.vcf.gz | wc -l | awk '{ print \$0*${minalleles} }' | awk '{printf("%d\\n", \$0+=\$0<0?0:0.9)}')
-    if [[ \${minalleles} -lt 2 ]];
-    then
-        minalleles=2;
-    fi;
-    echo "minalleles=${minalleles}"
-    for chrom in I II III IV V X; do
-        java -jar `which ibdseq.r1206.jar` \\
-            gt=WI.${date}.impute.vcf.gz \\
-            out=haplotype_\${chrom} \\
-            ibdtrim=${ibdtrim} \\
-            minalleles=\${minalleles} \\
-            r2max=${r2max} \\
-            nthreads=4 \\
-            chrom=\${chrom}
-        done;
-    cat *.ibd | awk '{ print \$0 "\\t${minalleles}\\t${ibdtrim}\\t${r2window}\\t${r2max}" }' > haplotype.tsv
-    Rscript --vanilla `which process_ibd.R`
-    """
 }
 
 
@@ -1067,11 +1085,11 @@ process generate_mod_tracks {
         set file("${date}.${severity}.bed.gz"), file("${date}.${severity}.bed.gz.tbi")
 
     """
-    bcftools view --apply-filters PASS WI.${date}.vcf.gz | \
-    grep ${severity} | \
-    awk '\$0 !~ "^#" { print \$1 "\\t" (\$2 - 1) "\\t" (\$2)  "\\t" \$1 ":" \$2 "\\t0\\t+"  "\\t" \$2 - 1 "\\t" \$2 "\\t0\\t1\\t1\\t0" }' | \\
-    bgzip  > ${date}.${severity}.bed.gz
-    tabix -p bed ${date}.${severity}.bed.gz
+        bcftools view --apply-filters PASS WI.${date}.vcf.gz | \
+        grep ${severity} | \
+        awk '\$0 !~ "^#" { print \$1 "\\t" (\$2 - 1) "\\t" (\$2)  "\\t" \$1 ":" \$2 "\\t0\\t+"  "\\t" \$2 - 1 "\\t" \$2 "\\t0\\t1\\t1\\t0" }' | \\
+        bgzip  > ${date}.${severity}.bed.gz
+        tabix -p bed ${date}.${severity}.bed.gz
     """
 }
 
@@ -1108,7 +1126,7 @@ process generate_isotype_vcf {
         set val(isotype), file("${isotype}.${date}.vcf.gz"), file("${isotype}.${date}.vcf.gz.tbi") into isotype_ind_vcf
 
     """
-    bcftools view -O z --samples ${isotype} --exclude-uncalled WI.${date}.vcf.gz  > ${isotype}.${date}.vcf.gz && tabix ${isotype}.${date}.vcf.gz
+        bcftools view -O z --samples ${isotype} --exclude-uncalled WI.${date}.vcf.gz  > ${isotype}.${date}.vcf.gz && tabix ${isotype}.${date}.vcf.gz
     """
 
 }
@@ -1127,16 +1145,459 @@ process generate_isotype_tsv {
         set val(isotype), file("${isotype}.${date}.tsv.gz")
 
     """
-    echo 'CHROM\\tPOS\\tREF\\tALT\\tFILTER\\tFT\\tGT' > ${isotype}.${date}.tsv
-    bcftools query -f '[%CHROM\\t%POS\\t%REF\\t%ALT\t%FILTER\\t%FT\\t%TGT]\\n' --samples ${isotype} WI.${date}.vcf.gz > ${isotype}.${date}.tsv
-    bgzip ${isotype}.${date}.tsv
-    tabix -S 1 -s 1 -b 2 -e 2 ${isotype}.${date}.tsv.gz
+        echo 'CHROM\\tPOS\\tREF\\tALT\\tFILTER\\tFT\\tGT' > ${isotype}.${date}.tsv
+        bcftools query -f '[%CHROM\\t%POS\\t%REF\\t%ALT\t%FILTER\\t%FT\\t%TGT]\\n' --samples ${isotype} WI.${date}.vcf.gz > ${isotype}.${date}.tsv
+        bgzip ${isotype}.${date}.tsv
+        tabix -S 1 -s 1 -b 2 -e 2 ${isotype}.${date}.tsv.gz
     """
 
 }
 
 vcf_stats = soft_filter_stats.concat( hard_filter_stats, impute_stats )
 
+
+/*
+    Manta-sv
+*/
+
+process manta_call {
+    
+    echo true
+
+    tag { SM }
+
+    input:
+    set val(SM), file("${SM}.bam"), file("${SM}.bam.bai") from bam_manta
+
+    output:
+    file "*.vcf.gz" into individual_output_vcf_zipped
+    file "*.vcf.gz.tbi" into individual_output_index
+    set val(SM), file("${SM}_manta.vcf") into manta_to_db
+
+
+    """
+        pyenv local py2-2018-03-09
+            ${params.manta_path} \\
+            --bam ${SM}.bam \\
+            --referenceFasta ${reference_handle_raw} \\
+            --outputContig \\
+            --runDir results/
+
+        python results/runWorkflow.py -m local -j 8
+
+        cp results/results/variants/diploidSV.vcf.gz .
+        cp results/results/variants/diploidSV.vcf.gz.tbi .
+
+        mv diploidSV.vcf.gz ${SM}_manta.vcf.gz 
+        mv diploidSV.vcf.gz.tbi ${SM}_manta.vcf.gz.tbi
+
+        bcftools view -Ov -o ${SM}_manta.vcf ${SM}_manta.vcf.gz 
+    """
+
+}
+
+individual_output_vcf_zipped
+  .toSortedList()
+  .into{ merged_deletion_vcf }
+
+
+individual_output_index
+  .toSortedList()
+  .into{ merged_vcf_index }
+
+
+process merge_vcf {
+    
+    echo true
+
+    publishDir params.out + "/variation", mode: 'copy'
+
+    input:
+      file merged_deletion_vcf
+      file merged_vcf_index
+
+    output:
+      set file("WI.${date}.MANTAsv.soft-filter.vcf.gz"), file("WI.${date}.MANTAsv.soft-filter.vcf.gz.csi") into processed_manta_vcf
+      file("WI.${date}.MANTAsv.soft-filter.stats.txt") into bcf_manta_stats
+
+    """
+        bcftools merge -m all --threads ${task.cpus} -o WI.${date}.MANTAsv.soft-filter.vcf.gz -Oz ${merged_deletion_vcf}
+        bcftools index -f WI.${date}.MANTAsv.soft-filter.vcf.gz
+        bcftools stats --verbose WI.${date}.MANTAsv.soft-filter.vcf.gz > WI.${date}.MANTAsv.soft-filter.stats.txt
+    """
+
+}
+
+process prune_manta {
+    
+    echo true
+
+    publishDir params.out + "/variation", mode: 'copy'
+
+    input:
+        set file(mantavcf), file(mantaindex) from processed_manta_vcf
+        file("gene.pkl") from gene_pkl_manta
+
+    output:
+        set file("WI.${date}.MANTAsv.LargeRemoved.snpeff.vcf.gz"), file("WI.${date}.MANTAsv.LargeRemoved.snpeff.vcf.gz.csi") into snpeff_manta_vcf
+        file("WI.${date}.MANTAsv.CONTIGS.tsv.gz") into manta_contigs
+        file("MANTAsv_snpeff_out.csv") into manta_snpeff_multiqc
+
+    """
+        bcftools plugin setGT -Oz -o manta_gt_filled.vcf.gz -- ${mantavcf} -t . -n 0
+        bcftools query -l manta_gt_filled.vcf.gz | sort > sample_names.txt
+        bcftools view --samples-file=sample_names.txt -Oz -o manta_gt_filled_sorted.vcf.gz manta_gt_filled.vcf.gz
+
+        bcftools view manta_gt_filled_sorted.vcf.gz | \\
+        bcftools filter -e 'INFO/SVLEN>100000' | \\
+        bcftools filter -e 'INFO/SVLEN<-100000' | \\
+        bcftools view -Oz -o manta_gt_filled_sorted_largeRemoved.vcf.gz
+
+        bcftools view -O v manta_gt_filled_sorted_largeRemoved.vcf.gz | \\
+        snpEff eff -csvStats MANTAsv_snpeff_out.csv \\
+        -no-downstream -no-intergenic -no-upstream \\
+        -dataDir ${params.snpeff_path} \\
+        -config ${params.snpeff_path}/snpEff.config \\
+        ${params.annotation_reference} | \\
+        bcftools view -O v | \\
+        python `which fix_snpeff_names.py` - | \\
+        bcftools view -O z > WI.${date}.MANTAsv.LargeRemoved.snpeff.vcf.gz
+
+        bcftools index -f WI.${date}.MANTAsv.LargeRemoved.snpeff.vcf.gz
+
+        bcftools query -f '%CHROM\\t%POS\\t%END\\t%SVTYPE\\t%SVLEN\\t%CONTIG[\\t%GT]\\n' WI.${date}.MANTAsv.LargeRemoved.snpeff.vcf.gz > WI.${date}.MANTAsv.CONTIGS.tsv
+
+        bgzip  WI.${date}.MANTAsv.CONTIGS.tsv
+    """
+
+}
+
+/*
+    Delly-sv
+*/
+
+process delly_sv {
+        
+    echo true
+
+    input:
+      set val(SM), file("${SM}.bam"), file("${SM}.bam.bai") from bam_delly
+
+    output:
+      file "*.bcf" into dellybcf
+
+
+    script:
+      """
+        delly call ${SM}.bam -g ${reference_handle_raw} -o ${SM}.bcf
+      """
+
+}
+
+dellybcf
+  .toSortedList()
+  .into{ deletion_bcf }
+
+process combine_delly {
+      
+  echo true
+
+
+  input:
+    file deletion_bcf
+
+  output:
+    file "*.bcf" into combined_delly_bcf
+
+
+  script:
+    """
+        delly merge ${deletion_bcf} -m 100 -n 100000 -b 500 -r 0.5 -o WI.delly.first.bcf
+    """
+
+}
+
+process recall_deletions {
+        
+    echo true
+
+    tag{ SM }
+    input:
+      set val(SM), file("${SM}.bam"), file("${SM}.bam.bai") from bam_delly_recall
+      file combined_delly_bcf
+
+    output:
+      file "${SM}_second.bcf" into recalled_delly_sv
+      file "${SM}_second.bcf.csi" into recalled_delly_sv_index
+      set val(SM), file("${SM}_second.vcf") into delly_to_db
+
+
+    script:
+      """
+        delly call ${SM}.bam -v ${combined_delly_bcf} -g ${reference_handle_raw} -o ${SM}_second.bcf
+
+        bcftools view -Ov -o ${SM}_second.vcf ${SM}_second.bcf
+      """
+
+}
+
+recalled_delly_sv
+  .toSortedList()
+  .into{ recalled_delly_sv_bcf }
+
+recalled_delly_sv_index
+  .toSortedList()
+  .into{ recalled_delly_sv_bcf_index }
+
+process combine_second_deletions {
+        
+    echo true
+
+    publishDir params.out + "/variation", mode: 'copy'
+
+    input:
+      file recalled_delly_sv_bcf
+      file recalled_delly_sv_bcf_index
+
+    output:
+      set file("WI.${date}.DELLYsv.raw.vcf.gz"), file("WI.${date}.DELLYsv.raw.vcf.gz.csi") into raw_recalled_wi_dell_sv
+      set file("WI.${date}.DELLYsv.germline-filter.vcf.gz"), file("WI.${date}.DELLYsv.germline-filter.vcf.gz.csi") into germline_recalled_wi_dell_sv
+      file "WI.${date}.DELLYsv.raw.stats.txt" into delly_bcf_stats
+
+    script:
+      """
+          bcftools merge -m id -O b -o WI.${date}.DELLYsv.raw.bcf ${recalled_delly_sv_bcf}
+          bcftools index -f WI.${date}.DELLYsv.raw.bcf
+          bcftools query -l WI.${date}.DELLYsv.raw.bcf | sort > sample_names.txt
+          bcftools view --samples-file=sample_names.txt -Oz -o WI.${date}.DELLYsv.raw.vcf.gz WI.${date}.DELLYsv.raw.bcf
+          bcftools index -f WI.${date}.DELLYsv.raw.vcf.gz
+
+          delly filter -f germline WI.${date}.DELLYsv.raw.bcf -o WI.${date}.DELLYsv.germline-filter.bcf
+
+          bcftools index -f WI.${date}.DELLYsv.germline-filter.bcf
+          bcftools view --samples-file=sample_names.txt -Oz -o WI.${date}.DELLYsv.germline-filter.vcf.gz WI.${date}.DELLYsv.germline-filter.bcf
+          bcftools index -f WI.${date}.DELLYsv.germline-filter.vcf.gz
+
+          bcftools stats --verbose WI.${date}.DELLYsv.raw.vcf.gz > WI.${date}.DELLYsv.raw.stats.txt     
+      """
+}
+
+process delly_snpeff {
+        
+    echo true
+
+    publishDir params.out + "/variation", mode: 'copy'
+
+    input:
+        set file(dellysv), file(dellysvindex) from germline_recalled_wi_dell_sv
+        file("gene.pkl") from gene_pkl_manta
+
+    output:
+        set file("WI.${date}.DELLYsv.snpEff.vcf.gz"), file("WI.${date}.DELLYsv.snpEff.vcf.gz.csi") into snpeff_delly_vcf
+        file("DELLYsv_snpeff_out.csv") into snpeff_delly_multiqc
+
+
+    script:
+      """
+        bcftools view ${dellysv} | \\
+        snpEff eff -csvStats DELLYsv_snpeff_out.csv \\
+        -no-downstream -no-intergenic -no-upstream \\
+        -dataDir ${params.snpeff_path} \\
+        -config ${params.snpeff_path}/snpEff.config \\
+        ${params.annotation_reference} | \\
+        bcftools view -O v | \\
+        python `which fix_snpeff_names.py` - | \\
+        bcftools view -O z > WI.${date}.DELLYsv.snpEff.vcf.gz
+
+        bcftools index -f WI.${date}.DELLYsv.snpEff.vcf.gz
+      """
+}
+
+/*
+    TIDDIT-sv
+*/
+
+process tiddit_call_sv {
+    
+    echo true
+
+    tag { SM }
+
+    input:
+    set val(SM), file("${SM}.bam"), file("${SM}.bam.bai") from bam_tiddit
+
+    output:
+    file "${SM}_tiddit.vcf.gz" into tiddit_vcf
+    file "${SM}_tiddit.vcf.gz.csi" into tiddit_index
+    file "*.signals.tab" into tiddit_coverage
+    set val(SM), file("${SM}_tiddit.vcf") into tiddit_to_db
+
+    """
+    python2 ${params.tiddit} \\
+    --sv \\
+    -o ${SM}_tiddit \\
+    -p ${params.tiddit_discord} \\
+    -r ${params.tiddit_discord} \\
+    --bam ${SM}.bam \\
+    --ref ${reference_handle_raw}
+
+    bcftools view ${SM}_tiddit.vcf | \\
+    vk geno transfer-filter - | \\
+    bcftools view -O z > ${SM}_tiddit.vcf.gz
+
+    bcftools index -f ${SM}_tiddit.vcf.gz
+    """
+
+}
+
+tiddit_vcf
+    .toSortedList()
+    .into{ tiddit_sample_vcfs }
+
+tiddit_index
+    .toSortedList()
+    .into{ tiddit_sample_indices }
+
+tiddit_coverage
+    .toSortedList()
+    .into{ tiddit_sample_coverage }
+
+
+process merge_tiddit_vcf {
+    
+    echo true
+
+    publishDir params.out + "/variation", mode: 'copy'
+
+    input:
+      file tiddit_sample_vcfs
+      file tiddit_sample_coverage
+      file tiddit_sample_indices
+
+    output:
+      set file("WI.${date}.TIDDITsv.soft-filter.vcf.gz"), file("WI.${date}.TIDDITsv.soft-filter.vcf.gz.csi") into softfilter_tiddit_vcf
+      file("WI.${date}.TIDDITsv.soft-filter.stats.txt") into tiddit_stats
+
+
+    """
+        bcftools merge -m all --threads ${task.cpus} -Ov ${tiddit_sample_vcfs} | \\
+        bcftools filter --set-GTs . --exclude 'FORMAT/FT != "PASS"' -Oz -o WI.${date}.TIDDITsv.soft-filter_unsorted.vcf.gz
+
+        bcftools query -l WI.${date}.TIDDITsv.soft-filter_unsorted.vcf.gz | sort > sample_names.txt
+        bcftools view --samples-file=sample_names.txt -Oz -o WI.${date}.TIDDITsv.soft-filter.vcf.gz WI.${date}.TIDDITsv.soft-filter_unsorted.vcf.gz
+
+        bcftools index -f WI.${date}.TIDDITsv.soft-filter.vcf.gz
+        bcftools stats --verbose WI.${date}.TIDDITsv.soft-filter.vcf.gz > WI.${date}.TIDDITsv.soft-filter.stats.txt
+    """
+
+}
+
+process tiddit_snpeff {
+        
+    echo true
+
+    publishDir params.out + "/variation", mode: 'copy'
+
+    input:
+        set file(tiddit_joint_vcf), file(tiddit_joint_index) from softfilter_tiddit_vcf
+        file("gene.pkl") from gene_pkl_tiddit
+
+    output:
+        set file("WI.${date}.TIDDITsv.snpEff.vcf.gz"), file("WI.${date}.TIDDITsv.snpEff.vcf.gz.csi") into snpeff_tiddit_vcf
+        file("TIDDITsv_snpeff_out.csv") into snpeff_tiddit_multiqc
+
+
+    script:
+      """
+        bcftools view ${tiddit_joint_vcf} | \\
+        snpEff eff -csvStats TIDDITsv_snpeff_out.csv \\
+        -no-downstream -no-intergenic -no-upstream \\
+        -dataDir ${params.snpeff_path} \\
+        -config ${params.snpeff_path}/snpEff.config \\
+        ${params.annotation_reference} | \\
+        bcftools view -O v | \\
+        python `which fix_snpeff_names.py` - | \\
+        bcftools view -O z > WI.${date}.TIDDITsv.snpEff.vcf.gz
+
+        bcftools index -f WI.${date}.TIDDITsv.snpEff.vcf.gz
+      """
+}
+
+manta_to_db.join(delly_to_db).join(tiddit_to_db).set{variant_db}
+
+
+process merge_sv_callers {
+        
+    echo true
+
+    input:
+        set val(SM), file(mantasv), file(dellysv), file(tidditsv) from variant_db
+
+    output:
+        file("${SM}_merged_caller.vcf.gz") into sample_merged_svcaller_vcf
+        file("${SM}_merged_caller.vcf.gz.csi") into sample_merged_svcaller_index
+    
+    script:
+      """
+        echo ${SM} > samplename.txt
+
+        svdb --merge --pass_only --no_var --vcf ${dellysv}:delly ${mantasv}:manta ${tidditsv}:tiddit --priority delly,manta,tiddit| \\
+        bcftools reheader -s samplename.txt | \\
+        awk '\$0 ~ "#" {print} !seen[\$1"\t"\$2]++ {print}' | \\
+        bcftools view -Oz -o ${SM}_merged_caller.vcf.gz
+
+        bcftools index -f ${SM}_merged_caller.vcf.gz
+      """
+}
+
+sample_merged_svcaller_vcf
+    .toSortedList()
+    .set{ merged_sample_sv_vcf }
+
+sample_merged_svcaller_index
+    .toSortedList()
+    .set{ merged_sample_sv_index }
+
+
+process merge_wi_sv_callers {
+        
+    echo true
+
+    publishDir params.out + "/variation", mode: 'copy'
+
+    input:
+        file(mergedSVvcf) from merged_sample_sv_vcf
+        file(mergedSVindex) from merged_sample_sv_index
+        file("gene.pkl") from gene_pkl_svdb
+
+    output:
+        file "WI.${date}.MERGEDsv.snpEff.vcf.gz" into wi_mergedsv
+
+
+    script:
+      """
+        bcftools merge -m all --threads ${task.cpus} -Oz -o temp_merged.vcf.gz ${mergedSVvcf}
+
+        bcftools view -Ov temp_merged.vcf.gz | grep '^#'  > db_merged_temp_sorted.vcf
+        bcftools view -Ov temp_merged.vcf.gz | grep -v -E '^X|^MtDNA|^#' | sort -k1,1d -k2,2n >> db_merged_temp_sorted.vcf
+        bcftools view -Ov temp_merged.vcf.gz | grep -E '^X' | sort -k1,1d -k2,2n >> db_merged_temp_sorted.vcf
+        bcftools view -Ov temp_merged.vcf.gz | grep -E '^MtDNA' | sort -k1,1d -k2,2n >> db_merged_temp_sorted.vcf
+
+        bcftools query -l db_merged_temp_sorted.vcf | sort > sample_names.txt
+
+        bcftools view --samples-file=sample_names.txt -Ov db_merged_temp_sorted.vcf | \\
+        snpEff eff -csvStats MERGEDsv_snpeff_out.csv \\
+        -no-downstream -no-intergenic -no-upstream \\
+        -dataDir ${params.snpeff_path} \\
+        -config ${params.snpeff_path}/snpEff.config \\
+        ${params.annotation_reference} | \\
+        bcftools view -O v | \\
+        python `which fix_snpeff_names.py` - | \\
+        bcftools view -O z > WI.${date}.MERGEDsv.snpEff.vcf.gz
+
+        bcftools index -f WI.${date}.MERGEDsv.snpEff.vcf.gz
+      """
+}
 
 process multiqc_report {
 
@@ -1153,13 +1614,18 @@ process multiqc_report {
         file("bam*.idxstats") from bam_idxstats_multiqc.toSortedList()
         file("picard*.stats.txt") from SM_picard_stats_set.collect()
         file("snpeff_out.csv") from snpeff_multiqc
+        file("DELLYsv_snpeff_out.csv") from snpeff_delly_multiqc
+        file("MANTAsv_snpeff_out.csv") from manta_snpeff_multiqc
+        file("WI.${date}.DELLYsv.raw.stats.txt") from delly_bcf_stats
+        file("WI.${date}.MANTAsv.soft-filter.stats.txt") from bcf_manta_stats
+        file("WI.${date}.TIDDITsv.soft-filter.stats.txt") from tiddit_stats
+        file("TIDDITsv_snpeff_out.csv") from snpeff_tiddit_multiqc
 
     output:
         file("multiqc_data/*.json") into multiqc_json_files
         file("multiqc.html")
 
     """
-        source init_pyenv.sh && pyenv activate multiqc
         multiqc -k json --filename multiqc.html .
     """
 
@@ -1170,7 +1636,6 @@ process comprehensive_report {
 
     input:
         file("multiqc_data/*.json") from multiqc_json_files
-        file("sitelist.tsv.gz") from sitelist_stat
 
     """
         echo "great"
@@ -1178,7 +1643,6 @@ process comprehensive_report {
     """
 
 }
-
 
 workflow.onComplete {
 
@@ -1206,5 +1670,7 @@ workflow.onComplete {
         outlog << param_summary
         outlog << summary
     }
+
+
 
 }
