@@ -975,17 +975,17 @@ process calc_rarefaction {
     output:
         file("rarefaction.pdf")
 
-    '''
+    """
     bcftools query -f "[%GT\t]\n" WI.20170531.impute.vcf.gz  | \
-    awk '{ gsub(":GT", "", $0); gsub("(# )?\[[0-9]+\]","",$0); print $0 }' | \
-    sed 's/0|0/0/g' | \
-    sed 's/1|1/1/g' | \
-    sed 's/0|1/NA/g' | \
-    sed 's/1|0/NA/g' | \
+    awk '{ gsub(":GT", "", \$0); gsub("(# )?\\[[0-9]+\\]","",\$0); print \$0 }' | \\
+    sed 's/0|0/0/g' | \\
+    sed 's/1|1/1/g' | \\
+    sed 's/0|1/NA/g' | \\
+    sed 's/1|0/NA/g' | \\
     gzip > impute_gts.tsv.gz
 
     Rscript `which rarefaction.R`
-    '''
+    """
 }
 
 
@@ -1433,6 +1433,8 @@ process combine_second_deletions {
 
 process delly_snpeff {
     
+    cpus params.cores
+
     publishDir params.out + "/variation", mode: 'copy'
 
     input:
@@ -1472,6 +1474,8 @@ process delly_snpeff {
 */
 
 process tiddit_call_sv {
+    
+    cpus params.cores
     
     tag { SM }
 
