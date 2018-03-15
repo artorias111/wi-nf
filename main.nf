@@ -20,7 +20,7 @@ contigs = Channel.from(CONTIG_LIST)
 date = new Date().format( 'yyyyMMdd' )
 params.out = "WI-${date}"
 params.debug = false
-params.annotation_reference = "WS261"
+params.annotation_reference = "WS263"
 params.cores = 6
 params.tmpdir = "tmp/"
 params.email = ""
@@ -782,9 +782,11 @@ process annotate_vcf_snpeff {
         """
             bcftools view --threads=${params.cores-1} -O v WI.${date}.soft-filter.vcf.gz | \\
             snpEff eff -csvStats snpeff_out.csv \\
-            -no-downstream -no-intergenic -no-upstream \\
-            -dataDir ${params.snpeff_path} \\
-            -config ${params.snpeff_path}/snpEff.config \\
+            -no-downstream \\
+            -no-intergenic \\
+            -no-upstream \\
+            -dataDir ${workflow.projectDir}/snpeff \\
+            -config ${workflow.projectDir}/snpeff/snpEff.config \\
             ${params.annotation_reference} | \\
             bcftools view -O v | \\
             python `which fix_snpeff_names.py` - | \\
