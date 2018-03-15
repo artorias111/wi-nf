@@ -46,7 +46,7 @@ if (params.debug == true) {
         *** Using debug mode ***
 
     """
-    params.fqs = "${workflow.projectDir}/test_data/SM_sample_sheet.tsv"
+    params.fqs = "${workflow.projectDir}/test_data/sample_sheet.tsv"
     params.bamdir = "${params.out}/bam"
     File fq_file = new File(params.fqs);
     params.fq_file_prefix = "${workflow.projectDir}/test_data"
@@ -55,7 +55,7 @@ if (params.debug == true) {
     // The SM sheet that is used is located in the root of the git repo
     params.bamdir = "(required)"
     params.fq_file_prefix = null;
-    params.fqs = "SM_sample_sheet.tsv"
+    params.fqs = "sample_sheet.tsv"
 }
 
 File fq_file = new File(params.fqs);
