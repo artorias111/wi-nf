@@ -29,6 +29,7 @@ params.manta_path = null
 params.tiddit_discord = null
 params.snpeff_path="${workflow.workDir}/snpeff"
 
+
 // Compressed Reference File
 File reference = new File("${params.reference}")
 if (params.reference != "(required)") {
@@ -294,7 +295,7 @@ process bam_isotype_stats {
 
     """
         samtools stats --threads=${task.cpus} ${SM}.bam > ${SM}.samtools.txt
-        bamtools --threads=${task.cpus} -in ${SM}.bam > ${SM}.bamtools.txt
+        bamtools -in ${SM}.bam > ${SM}.bamtools.txt
         fastqc --threads ${task.cpus} ${SM}.bam
         picard CollectAlignmentSummaryMetrics R=${reference_handle} I=${SM}.bam O=${SM}.picard.alignment_metrics.txt
         picard CollectInsertSizeMetrics I=${SM}.bam O=${SM}.picard.insert_metrics.txt H=${SM}.picard.insert_histogram.txt
@@ -366,7 +367,11 @@ process isotype_bam_stats {
         file 'bam_stat' into SM_bam_stat_files
 
     """
-        cat <(samtools stats ${SM}.bam | grep ^SN | cut -f 2- | awk '{ print "${SM}\t" \$0 }' | sed 's/://g') > bam_stat
+        samtools stats ${SM}.bam | \\
+        grep ^SN | \\
+        cut -f 2- | \\
+        awk '{ print "${SM}\t" \$0 }' | \\
+        sed 's/://g' > bam_stat
     """
 }
 
@@ -569,7 +574,7 @@ process merge_gvcfs {
         file indices from individual_sites_index.toSortedList()
 
     output:
-        set file("wild_isolate.vcf.gz"), file("wild_isolate.vcf.gz.tbi") into wild_isolate_vcf
+        set file("wild_isolate.vcf.gz"), file("wild_isolate.vcf.gz.tbi") into raw_wild_isolate_vcf
 
 
     """
@@ -631,17 +636,16 @@ process gatk_to_diploid {
     publishDir "${params.out}/variation", mode: 'copy'
 
     input:
-      set file("wild_isolate.vcf.gz"), file("wild_isolate.vcf.gz.tbi") from wild_isolate_vcf
+      set file("wild_isolate.vcf.gz"), file("wild_isolate.vcf.gz.tbi") from raw_wild_isolate_vcf
 
     output:
-      set file("WI.${date}.raw.vcf.gz"), file("WI.${date}.raw.vcf.gz.tbi") into wild_isolate_diploid_vcf
+      set file("WI.${date}.raw.vcf.gz"), file("WI.${date}.raw.vcf.gz.tbi") into raw_wild_isolate_diploid_vcf
 
 
     """
         bcftools view wild_isolate.vcf.gz | \\
-        sed 's/\t([0-9\\.]+0\\):/\t&\\/&:/g' > wild_isolate_diploid.vcf
-
-        bgzip -c WI.${date}.raw.vcf.gz > WI.${date}.raw.vcf.gz
+        sed -E 's/\\t([0-9\\.]+):/\\t\\1\\/\\1:/g' | \\
+        bgzip -c --threads ${task.cpus} > WI.${date}.raw.vcf.gz
         tabix -p vcf WI.${date}.raw.vcf.gz
     """
 }
@@ -655,7 +659,7 @@ process apply_filters {
     cpus params.cores
 
     input:
-        set file(unionvcf), file(unionvcfindex) from wild_isolate_diploid_vcf
+        set file(unionvcf), file(unionvcfindex) from raw_wild_isolate_diploid_vcf
 
     output:
         set file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi") into filtered_vcf
@@ -665,7 +669,7 @@ process apply_filters {
     """
         # Implement bash-trap; This removes files whether the process succeeds or fails.
         function finish {
-            rm -f wi_norm.vcf
+            rm -f wi_norm.vcf.gz
             rm -f indel_soft_filters.vcf.gz
             rm -f snps.vcf.gz
             rm -f snp_indel_soft_filters.vcf
@@ -681,32 +685,37 @@ process apply_filters {
             --genotype-filter-name "depth" \\
             -O wi_dp.vcf
 
-        bcftools norm -m -any --threads ${task.cpus} -O v -o wi_norm.vcf wi_dp.vcf
+        bcftools norm -m -any --threads ${task.cpus} -O z wi_dp.vcf > wi_norm.vcf.gz 
 
-        bcftools view -v indels wi_norm.vcf | \\
+        # Output indels
+        bcftools view -v indels wi_norm.vcf.gz | \\
         bcftools filter -O v --threads ${task.cpus-1} --mode + --soft-filter indelsor --include "INFO/SOR > ${params.strand_odds_ratio}" | \\
         bcftools filter -O z --threads ${task.cpus-1} --mode + --soft-filter indelqd --include "INFO/QD > ${params.quality_by_depth}" > indel_soft_filters.vcf.gz 
-
-        bcftools view -v snps -O z wi_norm.vcf > snps.vcf.gz
-
-        bcftools index --threads=${task.cpus} snps.vcf.gz
         bcftools index --threads=${task.cpus} indel_soft_filters.vcf.gz
 
-        printf 'indel_soft_filters.vcf.gz\\nsnps.vcf.gz\\n' > tomerge.txt
+        # Output snps
+        bcftools view -v snps -O z wi_norm.vcf.gz > snps.vcf.gz
+        bcftools index --threads=${task.cpus} snps.vcf.gz
 
-        bcftools concat --threads ${task.cpus-1} --allow-overlaps -file-list tomerge.txt | \\
-        bcftools filter -O v --threads ${task.cpus-1} --mode + --soft-filter mapping_quality --include "INFO/MQ > ${params.mapping_quality}" > snp_indel_soft_filters.vcf
+        bcftools concat --threads ${task.cpus-1} \\
+                        --allow-overlaps \\
+                        indel_soft_filters.vcf.gz \\
+                        snps.vcf.gz | \\
+        bcftools filter -O v \\
+                        --mode + \\
+                        --soft-filter mapping_quality \\
+                        --include "INFO/MQ > ${params.mapping_quality}" > snp_indel_soft_filters.vcf
 
         gatk-launch VariantFiltration \\
             -R ${reference_handle_uncompressed} \\
             --variant snp_indel_soft_filters.vcf \\
-            --genotype-filter-expression "( (AD[1] / AD[0]) + AD[0]) < ${params.dv_dp}" \\
+            --genotype-filter-expression "( AD[1] / (AD[0] + AD[0]) ) < ${params.dv_dp}" \\
             --genotype-filter-name "dv_dp" \\
             --genotype-filter-expression "QD < 10.0 && AD[1] / (AD[1] + AD[0]) < ${params.dv_dp} && ReadPosRankSum < 0.0" \\
             --genotype-filter-name "dv_dp_qd_readposranksum" \\
             -O wi_dv_dp.vcf
 
-        bcftools norm -m +any --threads ${task.cpus-1} -O v -o wi_dv_dp_norm.vcf wi_dv_dp.vcf
+        bcftools norm -m +any -O v -o wi_dv_dp_norm.vcf wi_dv_dp.vcf
 
         gatk-launch VariantFiltration \\
             -R ${reference_handle_uncompressed} \\
@@ -716,7 +725,6 @@ process apply_filters {
             -O wi_qual.vcf
 
         bcftools filter -O z --threads ${task.cpus-1} --mode + --soft-filter high_missing --include "F_MISSING<=${params.missing}" wi_qual.vcf > WI.${date}.soft-filter.vcf.gz
-
         bcftools index --threads ${task.cpus} -f WI.${date}.soft-filter.vcf.gz
         bcftools stats --verbose WI.${date}.soft-filter.vcf.gz > WI.${date}.soft-filter.stats.txt
     """
@@ -876,7 +884,7 @@ process calculate_hard_vcf_summary {
 */
 process phylo_analysis {
 
-    publishDir params.out + "/popgen/trees", mode: "copy"
+    publishDir "${params.out}/popgen/trees", mode: "copy"
 
     tag { contig }
 
@@ -887,7 +895,6 @@ process phylo_analysis {
         set val(contig), file("${contig}.tree") into trees
 
     """
-        source init_pyenv.sh && pyenv activate vcf-kit
         if [ "${contig}" == "genome" ]
         then
             vk phylo tree nj WI.${date}.hard-filter.vcf.gz > genome.tree
@@ -900,14 +907,13 @@ process phylo_analysis {
                 exit 1;
             fi
         fi
-
     """
 }
 
 
 process plot_trees {
 
-    publishDir params.out + "/popgen/trees", mode: "copy"
+    publishDir "${params.out}/popgen/trees", mode: "copy"
 
     tag { contig }
 
@@ -928,7 +934,7 @@ process plot_trees {
 
 process tajima_bed {
 
-    publishDir params.out + "/popgen", mode: 'copy'
+    publishDir "${params.out}/popgen", mode: 'copy'
 
     input:
         set file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") from tajima_bed
@@ -1212,12 +1218,12 @@ process manta_call {
 
 individual_output_vcf_zipped
   .toSortedList()
-  .into{ merged_deletion_vcf }
+  .set { merged_deletion_vcf }
 
 
 individual_output_index
   .toSortedList()
-  .into{ merged_vcf_index }
+  .set { merged_vcf_index }
 
 
 process merge_manta_vcf {
@@ -1314,9 +1320,6 @@ dellybcf
 
 process combine_delly {
       
-  echo true
-
-
   input:
     file deletion_bcf
 
@@ -1333,8 +1336,6 @@ process combine_delly {
 
 process recall_deletions {
         
-    echo true
-
     tag { SM }
     
     input:
@@ -1364,8 +1365,6 @@ recalled_delly_sv_index
 
 process combine_second_deletions {
         
-    echo true
-
     publishDir params.out + "/variation", mode: 'copy'
 
     input:
@@ -1484,8 +1483,6 @@ tiddit_coverage
 
 process merge_tiddit_vcf {
     
-    echo true
-
     publishDir "${params.out}/variation", mode: 'copy'
 
     input:
