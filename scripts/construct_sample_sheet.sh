@@ -230,8 +230,8 @@ if [[ $(cut -f 2 ${fq_sheet}  | sort | uniq -c | grep -v '1 ') ]]; then
     cat ${fq_sheet} | sort > ../sample_sheet.error
     exit 1
 else
-    echo "$(cat ../sample_sheet.tsv | wc -l) records. Sample sheet output to ../sample_sheet.tsv"
     cat ${fq_sheet} | sort > ../sample_sheet.tsv
+    echo "$(cat ../sample_sheet.tsv | wc -l) records. Sample sheet output to ../sample_sheet.tsv"
 fi
 
 
