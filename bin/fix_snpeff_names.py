@@ -28,11 +28,12 @@ if __name__ == "__main__":
                 ann = ','.join(["|".join(x) for x in ann])
                 line.INFO['ANN'] = ann
             if BCSQ:
-                ann = [x.split("|") for x in BCSQ.split(",")]
-                for x in ann:
-                    if x[1] in list(gene_set.keys()):
-                        x[1] = gene_set[x[1]]
-                ann = ','.join(["|".join(x) for x in ann])
-                line.INFO['BCSQ'] = ann
+                bcsq = [x.split("|") for x in BCSQ.split(",")]
+                for x in bcsq:
+                    if len(x) > 1:
+                        if x[1] in list(gene_set.keys()):
+                            x[1] = gene_set[x[1]]
+                    bcsq = ','.join(["|".join(x) for x in bcsq])
+                    line.INFO['BCSQ'] = bcsq
             print((str(line).strip()))
                     

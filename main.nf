@@ -633,8 +633,6 @@ process merge_gvcfs {
 
 process gatk_to_diploid {
 
-    publishDir "${params.out}/variation", mode: 'copy'
-
     input:
       set file("wild_isolate.vcf.gz"), file("wild_isolate.vcf.gz.tbi") from raw_wild_isolate_vcf
 
@@ -763,7 +761,7 @@ gene_pkl.into {
                     gene_pkl_svdb;
               }
 
-process annotate_vcf_snpeff {
+process annotate_vcf {
 
     cpus params.cores
 
@@ -780,7 +778,13 @@ process annotate_vcf_snpeff {
 
     script:
         """
-            bcftools view --threads=${params.cores-1} -O v WI.${date}.soft-filter.vcf.gz | \\
+            # Download the annotation file           
+            wget -O ce.gff3.gz ftp://ftp.ensembl.org/pub/current_gff3/caenorhabditis_elegans/Caenorhabditis_elegans.WBcel235.91.gff3.gz
+
+            # bcftools csq
+            bcftools view --threads=${task.cpus-1} -O v WI.${date}.soft-filter.vcf.gz | \\
+            bcftools csq -O v --fasta-ref ${reference_handle} \\
+                         --gff-annot ce.gff3.gz | \\
             snpEff eff -csvStats snpeff_out.csv \\
             -no-downstream \\
             -no-intergenic \\
@@ -806,10 +810,8 @@ process generate_hard_vcf {
         set file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi") from filtered_vcf_to_hard
 
     output:
-        set file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") into hard_vcf_to_impute
-        set file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") into tajima_bed
-        set file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") into vcf_phylo
-        set val('clean'), file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") into hard_vcf
+        set file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") into hard_vcf
+        set val('clean'), file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") into hard_vcf_summary
         file("WI.${date}.hard-filter.vcf.gz.tbi")
         file("WI.${date}.hard-filter.stats.txt") into hard_filter_stats
 
@@ -830,7 +832,13 @@ process generate_hard_vcf {
     """
 }
 
-hard_vcf.set { hard_vcf_summary }
+hard_vcf.into { 
+                hard_vcf_to_impute;
+                tajima_bed;
+                vcf_phylo;
+                rarefaction_hard_vcf;
+            }
+
 
 process calculate_gtcheck {
 
@@ -951,6 +959,36 @@ process tajima_bed {
 }
 
 
+/*
+    ===========
+    rarefaction
+    ===========
+*/
+
+process calc_rarefaction {
+
+    publishDir "${params.out}/popgen", mode: 'copy'
+
+    input: 
+        set file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") from rarefaction_hard_vcf
+
+    output:
+        file("rarefaction.pdf")
+
+    '''
+    bcftools query -f "[%GT\t]\n" WI.20170531.impute.vcf.gz  | \
+    awk '{ gsub(":GT", "", $0); gsub("(# )?\[[0-9]+\]","",$0); print $0 }' | \
+    sed 's/0|0/0/g' | \
+    sed 's/1|1/1/g' | \
+    sed 's/0|1/NA/g' | \
+    sed 's/1|0/NA/g' | \
+    gzip > impute_gts.tsv.gz
+
+    Rscript `which rarefaction.R`
+    '''
+}
+
+
 process imputation {
 
     cpus params.cores
@@ -1022,13 +1060,11 @@ process download_annotation_files {
         set val("phastcons"), file("elegans.phastcons.wib") into phastcons
         set val("phylop"), file("elegans.phylop.wib") into phylop
         set val("repeatmasker"), file("elegans_repeatmasker.bb") into repeatmasker
-        file("Caenorhabditis_elegans.WBcel235.91.gff3.gz") into ensembl_gff3_csq
 
     """
         wget ftp://ftp.wormbase.org/pub/wormbase/releases/WS258/MULTI_SPECIES/hub/elegans/elegans.phastcons.wib
         wget ftp://ftp.wormbase.org/pub/wormbase/releases/WS258/MULTI_SPECIES/hub/elegans/elegans.phylop.wib
         wget ftp://ftp.wormbase.org/pub/wormbase/releases/WS258/MULTI_SPECIES/hub/elegans/elegans_repeatmasker.bb
-        wget ftp://ftp.ensembl.org/pub/current_gff3/caenorhabditis_elegans/Caenorhabditis_elegans.WBcel235.91.gff3.gz
     """
 }
 
@@ -1066,7 +1102,6 @@ process annovar_and_output_soft_filter_vcf {
         file(track) from bed_tracks.toSortedList()
         file(track) from bed_indices.toSortedList()
         file('vcf_anno.conf') from Channel.fromPath("vcfanno.conf")
-        file("ensembl.gff3.gz") from ensembl_gff3_csq
 
     output:
         set file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi"), file("WI.${date}.soft-filter.vcf.gz.tbi") into soft_filter_vcf
@@ -1318,7 +1353,7 @@ process delly_sv {
 
 dellybcf
     .toSortedList()
-    .into{ deletion_bcf }
+    .set { deletion_bcf }
 
 process combine_delly {
       
@@ -1359,11 +1394,11 @@ process recall_deletions {
 
 recalled_delly_sv
   .toSortedList()
-  .into{ recalled_delly_sv_bcf }
+  .set { recalled_delly_sv_bcf }
 
 recalled_delly_sv_index
   .toSortedList()
-  .into{ recalled_delly_sv_bcf_index }
+  .set { recalled_delly_sv_bcf_index }
 
 process combine_second_deletions {
         
