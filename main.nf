@@ -836,7 +836,7 @@ hard_vcf.into {
                 hard_vcf_to_impute;
                 tajima_bed;
                 vcf_phylo;
-                rarefaction_hard_vcf;
+                hard_vcf_variant_accumulation;
             }
 
 
@@ -960,23 +960,23 @@ process tajima_bed {
 
 
 /*
-    ===========
-    rarefaction
-    ===========
+    ====================
+    variant_accumulation
+    ====================
 */
 
-process calc_rarefaction {
+process calc_variant_accumulation {
 
     publishDir "${params.out}/popgen", mode: 'copy'
 
     input: 
-        set file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") from rarefaction_hard_vcf
+        set file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") from hard_vcf_variant_accumulation
 
     output:
-        file("rarefaction.pdf")
+        file("variant_accumulation.pdf")
 
     """
-    bcftools query -f "[%GT\t]\n" WI.20170531.impute.vcf.gz  | \
+    bcftools query -f "[%GT\t]\n" WI.${date}.hard-filter.vcf.gz  | \
     awk '{ gsub(":GT", "", \$0); gsub("(# )?\\[[0-9]+\\]","",\$0); print \$0 }' | \\
     sed 's/0|0/0/g' | \\
     sed 's/1|1/1/g' | \\
@@ -984,7 +984,7 @@ process calc_rarefaction {
     sed 's/1|0/NA/g' | \\
     gzip > impute_gts.tsv.gz
 
-    Rscript `which rarefaction.R`
+    Rscript `which variation_accumulation.R`
     """
 }
 
