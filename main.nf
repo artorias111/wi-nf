@@ -5,6 +5,7 @@
  *
  */
 
+
 /*
     Globals
 */
@@ -51,11 +52,24 @@ if (params.debug == true) {
     File fq_file = new File(params.fqs);
     params.fq_file_prefix = "${workflow.projectDir}/test_data"
 
+    // DEBUG Filter thresholds
+    min_depth=0
+    qual=10
+    mq=10
+    dv_dp=0.0
+
+
 } else {
     // The SM sheet that is used is located in the root of the git repo
     params.bamdir = "(required)"
     params.fq_file_prefix = null;
     params.fqs = "sample_sheet.tsv"
+
+    min_depth=10
+    qual=30
+    mq=40
+    dv_dp=0.5
+
 }
 
 File fq_file = new File(params.fqs);
@@ -511,22 +525,35 @@ process call_variants {
         file("${SM}.vcf.gz") into isotype_vcf
 
     """
+    function process_variants {
+        bcftools mpileup --redo-BAQ \\
+                         --redo-BAQ \\
+                         -r \${1} \\
+                         --gvcf 3 \\
+                         --annotate DP,AD,ADF,ADR,INFO/AD,SP \\
+                         --fasta-ref ${reference_handle} ${SM}.bam | \\
+        bcftools call --gvcf 3 \\
+                      --multiallelic-caller -O v  - | \\
+        vk geno het-polarization - | \\
+        bcftools filter -O u --mode + --soft-filter quality --include "QUAL >= ${qual} || FORMAT/GT == '0/0'" |  \\
+        bcftools filter -O u --mode + --soft-filter min_depth --include "FORMAT/DP > ${min_depth}" | \\
+        bcftools filter -O u --mode + --soft-filter mapping_quality --include "INFO/MQ > ${mq}" | \\
+        bcftools filter -O v --mode + --soft-filter dv_dp --include "(FORMAT/[*:1])/(FORMAT/DP) >= ${dv_dp} || FORMAT/GT == '0/0'" | \\
+        awk -v OFS="\t" '\$0 ~ "^#" { print } \$0 ~ ":AB" { gsub("PASS","", \$7); if (\$7 == "") { \$7 = "het"; } else { \$7 = \$7 ";het"; } } \$0 !~ "^#" { print }' | \\
+        awk -v OFS="\t" '\$0 ~ "^#CHROM" { print "##FILTER=<ID=het,Description=\\"heterozygous_call_after_het_polarization\\">"; print; } \$0 ~ "^#" && \$0 !~ "^#CHROM" { print } \$0 !~ "^#" { print }' | \\
+        vk geno transfer-filter - | \\
+        bcftools view -O z > ${SM}.\${1}.vcf.gz
+    }
+
+    export -f process_variants
+
     contigs="`samtools view -H ${SM}.bam | grep -Po 'SN:([^\\W]+)' | cut -c 4-40`"
-    echo \${contigs} | tr ' ' '\\n' | xargs --verbose -I {} -P ${task.cpus} sh -c "samtools mpileup --redo-BAQ --threads ${task.cpus-1} --redo-BAQ -r {} --BCF --gvcf 3 --output-tags DP,AD,ADF,ADR,INFO/AD,SP --fasta-ref ${reference_handle} ${SM}.bam | bcftools call --threads ${task.cpus-1} --gvcf 3 --variants-only --multiallelic-caller -O z  -  > ${SM}.{}.vcf.gz"
+    parallel -j ${task.cpus} --verbose process_variants {} ::: \${contigs}
     order=`echo \${contigs} | tr ' ' '\\n' | awk '{ print "${SM}." \$1 ".vcf.gz" }'`
     
     # Concatenate and filter
-    bcftools concat \${order} -O v | \\
-    vk geno het-polarization - | \\
-    bcftools filter -O u --threads ${task.cpus} --mode + --soft-filter quality --include "QUAL >= ${qual} || FORMAT/GT == '0/0'" |  \\
-    bcftools filter -O u --threads ${task.cpus} --mode + --soft-filter min_depth --include "FORMAT/DP > ${min_depth}" | \\
-    bcftools filter -O u --threads ${task.cpus} --mode + --soft-filter mapping_quality --include "INFO/MQ > ${mq}" | \\
-    bcftools filter -O v --threads ${task.cpus} --mode + --soft-filter dv_dp --include "(FORMAT/AD[1])/(FORMAT/DP) >= ${dv_dp} || FORMAT/GT == '0/0'" | \\
-    awk -v OFS="\t" '\$0 ~ "^#" { print } \$0 ~ ":AB" { gsub("PASS","", \$7); if (\$7 == "") { \$7 = "het"; } else { \$7 = \$7 ";het"; } } \$0 !~ "^#" { print }' | \\
-    awk -v OFS="\t" '\$0 ~ "^#CHROM" { print "##FILTER=<ID=het,Description=\\"heterozygous_call_after_het_polarization\\">"; print; } \$0 ~ "^#" && \$0 !~ "^#CHROM" { print } \$0 !~ "^#" { print }' | \\
-    vk geno transfer-filter - | \\
-    bcftools view -O z > ${SM}.union.vcf.gz
-    bcftools index ${SM}.vcf.gz
+    bcftools concat --threads ${task.cpus-1} \${order} -O z > ${SM}.union.vcf.gz
+    bcftools index --threads ${task.cpus} ${SM}.vcf.gz
     rm \${order}
 
     """
