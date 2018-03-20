@@ -527,16 +527,16 @@ process call_variants {
     """
 
     # Subsample high-depth bams
-    coverage=`goleft covstats ${SM}.bam | awk 'NR > 1 { printf "%5.0f", $1 }'`
+    coverage=`goleft covstats ${SM}.bam | awk 'NR > 1 { printf "%5.0f", \$1 }'`
 
     if [ \${coverage} -gt 100 ];
     then
         echo "Coverage is high; Subsampling to 100x"
         # Calculate fraction of reads to keep
-        frac_keep=`echo "100.0 / \${coverage}" | bc`
+        frac_keep=`echo "100.0 / \${coverage}" | bc -l | awk '{printf "%0.2f", $0 }'`
         SM_use=`mktemp --suffix bam`
-        sambamba view --nthreads=${task.cpus} --show-progress --sam-input --format=bam --with-header --subsample=\${fraq_keep} ${SM}.bam > ${SM_use}
-        sambamba index --nthreads ${task.cpus} ${SM_use}
+        sambamba view --nthreads=${task.cpus} --show-progress --sam-input --format=bam --with-header --subsample=\${frac_keep} ${SM}.bam > \${SM_use}
+        sambamba index --nthreads ${task.cpus} \${SM_use}
     else
         echo "Coverage is low; No subsampling"
         SM_use="${SM}.bam"
@@ -549,7 +549,7 @@ process call_variants {
                          -r \${1} \\
                          --gvcf 1 \\
                          --annotate DP,AD,ADF,ADR,INFO/AD,SP \\
-                         --fasta-ref ${reference_handle} ${SM}.bam | \\
+                         --fasta-ref ${reference_handle} \${SM_use} | \\
         bcftools call --multiallelic-caller \\
                       --gvcf 3 \\
                       --multiallelic-caller -O v  - | \\
