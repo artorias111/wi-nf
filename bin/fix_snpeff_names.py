@@ -33,7 +33,7 @@ if __name__ == "__main__":
                     if len(x) > 1:
                         if x[1] in list(gene_set.keys()):
                             x[1] = gene_set[x[1]]
-                    bcsq = ','.join(["|".join(x) for x in bcsq])
-                    line.INFO['BCSQ'] = bcsq
+                bcsq = ','.join(["|".join(x) for x in bcsq])
+                line.INFO['BCSQ'] = bcsq
             print((str(line).strip()))
                     

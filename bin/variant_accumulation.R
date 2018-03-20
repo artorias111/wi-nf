@@ -1,7 +1,7 @@
 library(tidyverse)
 
 
-df_use <- tseries::read.matrix(gzfile("~/Desktop/impute_gts.tsv.gz"))
+df_use <- tseries::read.matrix(gzfile("impute_gts.tsv.gz"))
 storage.mode(df_use) <- "logical"
 
 
