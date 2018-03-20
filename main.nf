@@ -531,10 +531,18 @@ process call_variants {
 
     if [ \${coverage} -gt 100 ];
     then
+
+        # Add a trap to remove temp files
+        frac_bam=`mktemp --suffix bam`
+        function finish {
+            rm "\${frac_bam}"
+        }
+        trap finish EXIT
+
         echo "Coverage is high; Subsampling to 100x"
         # Calculate fraction of reads to keep
         frac_keep=`echo "100.0 / \${coverage}" | bc -l | awk '{printf "%0.2f", $0 }'`
-        SM_use=`mktemp --suffix bam`
+        SM_use=${frac_bam}
         sambamba view --nthreads=${task.cpus} --show-progress --sam-input --format=bam --with-header --subsample=\${frac_keep} ${SM}.bam > \${SM_use}
         sambamba index --nthreads ${task.cpus} \${SM_use}
     else
