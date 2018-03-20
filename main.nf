@@ -529,10 +529,11 @@ process call_variants {
         bcftools mpileup --redo-BAQ \\
                          --redo-BAQ \\
                          -r \${1} \\
-                         --gvcf 3 \\
+                         --gvcf 1 \\
                          --annotate DP,AD,ADF,ADR,INFO/AD,SP \\
                          --fasta-ref ${reference_handle} ${SM}.bam | \\
-        bcftools call --gvcf 3 \\
+        bcftools call --multiallelic-caller \\
+                      --gvcf 3 \\
                       --multiallelic-caller -O v  - | \\
         vk geno het-polarization - | \\
         bcftools filter -O u --mode + --soft-filter quality --include "QUAL >= ${qual} || FORMAT/GT == '0/0'" |  \\
@@ -542,6 +543,7 @@ process call_variants {
         awk -v OFS="\t" '\$0 ~ "^#" { print } \$0 ~ ":AB" { gsub("PASS","", \$7); if (\$7 == "") { \$7 = "het"; } else { \$7 = \$7 ";het"; } } \$0 !~ "^#" { print }' | \\
         awk -v OFS="\t" '\$0 ~ "^#CHROM" { print "##FILTER=<ID=het,Description=\\"heterozygous_call_after_het_polarization\\">"; print; } \$0 ~ "^#" && \$0 !~ "^#CHROM" { print } \$0 !~ "^#" { print }' | \\
         vk geno transfer-filter - | \\
+        bcftools norm --check-ref s --fasta-ref ${reference_handle} | \\
         bcftools view -O z > ${SM}.\${1}.vcf.gz
     }
 
@@ -552,7 +554,7 @@ process call_variants {
     order=`echo \${contigs} | tr ' ' '\\n' | awk '{ print "${SM}." \$1 ".vcf.gz" }'`
     
     # Concatenate and filter
-    bcftools concat --threads ${task.cpus-1} \${order} -O z > ${SM}.union.vcf.gz
+    bcftools concat --threads ${task.cpus-1} \${order} -O z > ${SM}.vcf.gz
     bcftools index --threads ${task.cpus} ${SM}.vcf.gz
     rm \${order}
 
@@ -597,7 +599,7 @@ process merge_union_vcf_chromosome {
                        --gvcf ${reference_handle} \\
                        --regions ${chrom} \\
                        -O z \\
-                       -m all \\
+                       -m both \\
                        --file-list ${union_vcfs} > ${chrom}.merged.raw.vcf.gz
         bcftools index --threads ${task.cpus} ${chrom}.merged.raw.vcf.gz
     """
@@ -906,10 +908,10 @@ process calc_variant_accumulation {
     """
     bcftools query -f "[%GT\t]\n" WI.${date}.hard-filter.vcf.gz  | \
     awk '{ gsub(":GT", "", \$0); gsub("(# )?\\[[0-9]+\\]","",\$0); print \$0 }' | \\
-    sed 's/0|0/0/g' | \\
-    sed 's/1|1/1/g' | \\
-    sed 's/0|1/NA/g' | \\
-    sed 's/1|0/NA/g' | \\
+    sed 's/0\\/0/0/g' | \\
+    sed 's/1\\/1/1/g' | \\
+    sed 's/0\\/1/NA/g' | \\
+    sed 's/1\\/0/NA/g' | \\
     gzip > impute_gts.tsv.gz
 
     Rscript --vanilla `which variant_accumulation.R`
