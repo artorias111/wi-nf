@@ -984,7 +984,7 @@ process calc_variant_accumulation {
     sed 's/1|0/NA/g' | \\
     gzip > impute_gts.tsv.gz
 
-    Rscript `which variation_accumulation.R`
+    Rscript --vanilla `which variant_accumulation.R`
     """
 }
 
