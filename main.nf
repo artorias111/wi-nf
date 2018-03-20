@@ -493,13 +493,12 @@ process combine_telseq {
 }
 
 /*
-    ====================
-    Call Variants - GATK
-    ====================
-    
-    Generate SM gVCFs
+    ========================
+    Call Variants - BCFTools
+    ========================    
 */
-process call_variants_individual {
+
+process call_variants {
 
     tag { SM }
 
@@ -509,222 +508,66 @@ process call_variants_individual {
         set val(SM), file("${SM}.bam"), file("${SM}.bam.bai") from bam_snp_individual
 
     output:
-        file("${SM}.g.vcf") into individual_sites
-        file("${SM}.g.vcf.idx") into individual_sites_index
+        file("${SM}.vcf.gz") into isotype_vcf
 
     """
-
-    function split_gatk() {
-      gatk-launch HaplotypeCaller \\
-            -R ${reference_handle_uncompressed} \\
-            -I ${SM}.bam \\
-            --emit-ref-confidence GVCF \\
-            --sample-ploidy 1 \\
-            --genotyping-mode DISCOVERY \\
-            --max-genotype-count 3000 \\
-            --max-alternate-alleles 100 \\
-            --annotation DepthPerAlleleBySample \\
-            --annotation Coverage \\
-            --annotation GenotypeSummaries \\
-            --annotation TandemRepeat \\
-            --annotation StrandBiasBySample \\
-            --annotation ChromosomeCounts \\
-            --annotation AS_QualByDepth \\
-            --annotation AS_StrandOddsRatio \\
-            --annotation AS_MappingQualityRankSumTest \\
-            --annotation DepthPerSampleHC \\
-            --annotation-group StandardAnnotation \\
-            --annotation-group AS_StandardAnnotation \\
-            --annotation-group StandardHCAnnotation \\
-            -L \${1} \\
-            -O ${SM}_\${1}.g.vcf            
-    }
-
-    export -f split_gatk
-
-    parallel --verbose split_gatk {} ::: I II III IV V X MtDNA
-
-    gatk-launch CombineGVCFs \\
-        -R ${reference_handle_uncompressed} \\
-        --variant ${SM}_I.g.vcf \\
-        --variant ${SM}_II.g.vcf \\
-        --variant ${SM}_III.g.vcf \\
-        --variant ${SM}_IV.g.vcf \\
-        --variant ${SM}_V.g.vcf \\
-        --variant ${SM}_X.g.vcf \\
-        --variant ${SM}_MtDNA.g.vcf \\
-        --annotation-group StandardAnnotation \\
-        --annotation-group AS_StandardAnnotation \\
-        -O ${SM}.g.vcf 
-
-    gatk-launch IndexFeatureFile \\
-        -F ${SM}.g.vcf
+    contigs="`samtools view -H ${SM}.bam | grep -Po 'SN:([^\\W]+)' | cut -c 4-40`"
+    echo \${contigs} | tr ' ' '\\n' | xargs --verbose -I {} -P ${task.cpus} sh -c "samtools mpileup --redo-BAQ --threads ${task.cpus-1} --redo-BAQ -r {} --BCF --gvcf 3 --output-tags DP,AD,ADF,ADR,INFO/AD,SP --fasta-ref ${reference_handle} ${SM}.bam | bcftools call --threads ${task.cpus-1} --gvcf 3 --variants-only --multiallelic-caller -O z  -  > ${SM}.{}.vcf.gz"
+    order=`echo \${contigs} | tr ' ' '\\n' | awk '{ print "${SM}." \$1 ".vcf.gz" }'`
+    
+    # Concatenate and filter
+    bcftools concat \${order} -O v | \\
+    vk geno het-polarization - | \\
+    bcftools filter -O u --threads ${task.cpus} --mode + --soft-filter quality --include "QUAL >= ${qual} || FORMAT/GT == '0/0'" |  \\
+    bcftools filter -O u --threads ${task.cpus} --mode + --soft-filter min_depth --include "FORMAT/DP > ${min_depth}" | \\
+    bcftools filter -O u --threads ${task.cpus} --mode + --soft-filter mapping_quality --include "INFO/MQ > ${mq}" | \\
+    bcftools filter -O v --threads ${task.cpus} --mode + --soft-filter dv_dp --include "(FORMAT/AD[1])/(FORMAT/DP) >= ${dv_dp} || FORMAT/GT == '0/0'" | \\
+    awk -v OFS="\t" '\$0 ~ "^#" { print } \$0 ~ ":AB" { gsub("PASS","", \$7); if (\$7 == "") { \$7 = "het"; } else { \$7 = \$7 ";het"; } } \$0 !~ "^#" { print }' | \\
+    awk -v OFS="\t" '\$0 ~ "^#CHROM" { print "##FILTER=<ID=het,Description=\\"heterozygous_call_after_het_polarization\\">"; print; } \$0 ~ "^#" && \$0 !~ "^#CHROM" { print } \$0 !~ "^#" { print }' | \\
+    vk geno transfer-filter - | \\
+    bcftools view -O z > ${SM}.union.vcf.gz
+    bcftools index ${SM}.vcf.gz
+    rm \${order}
 
     """
 }
 
-// Merge gVCFs
 
-process merge_gvcfs {
+process generate_vcf_list {
+
+    executor 'local'
+
+    cpus 1 
+
+    input:
+       val vcf_set from isotype_vcf.toSortedList()
+
+    output:
+       file("union_vcfs.txt") into union_vcfs
+
+    """
+        echo ${vcf_set.join(" ")} | tr ' ' '\\n' > union_vcfs.txt
+    """
+}
+
+union_vcfs_in = union_vcfs.spread(contigs)
+
+process merge_union_vcf_chromosome {
 
     cpus params.cores
 
-    input:
-        file gvcfs from individual_sites.toSortedList()
-        file indices from individual_sites_index.toSortedList()
-
-    output:
-        set file("wild_isolate.vcf.gz"), file("wild_isolate.vcf.gz.tbi") into raw_wild_isolate_vcf
-
-
-    """
-    find . -name '*.g.vcf' > input.list
-
-    function combine_gvcfs() {
-    gatk-launch GenomicsDBImport \\
-        -R ${reference_handle_uncompressed} \\
-            -V input.list \\
-            --genomicsdb-workspace-path my_database_\${1} \\
-            -L \${1}
-
-    gatk-launch GenotypeGVCFs \\
-             -R ${reference_handle_uncompressed} \\
-             -new-qual \\
-             -stand-call-conf 0 \\
-            --max-genotype-count 3000 \\
-            --max-alternate-alleles 100 \\
-             --annotation DepthPerAlleleBySample \\
-             --annotation Coverage \\
-             --annotation GenotypeSummaries \\
-             --annotation TandemRepeat \\
-             --annotation StrandBiasBySample \\
-             --annotation ChromosomeCounts \\
-             --annotation AS_QualByDepth \\
-             --annotation AS_StrandOddsRatio \\
-             --annotation AS_MappingQualityRankSumTest \\
-             --annotation DepthPerSampleHC \\
-             --variant gendb://my_database_\${1} \\
-             --annotation-group StandardAnnotation \\
-             --annotation-group AS_StandardAnnotation \\
-             -L \${1} \\
-             -O wild_isolate_\${1}.vcf
-    }
-
-    export -f combine_gvcfs
-
-    parallel --verbose combine_gvcfs {} ::: I II III IV V X MtDNA
-
-    gatk-launch GatherVcfs \\
-        -R ${reference_handle_uncompressed} \\
-        -I wild_isolate_I.vcf \\
-        -I wild_isolate_II.vcf \\
-        -I wild_isolate_III.vcf \\
-        -I wild_isolate_IV.vcf \\
-        -I wild_isolate_V.vcf \\
-        -I wild_isolate_X.vcf \\
-        -I wild_isolate_MtDNA.vcf \\
-        -O wild_isolate.vcf 
-
-    bgzip --threads=${task.cpus} -c wild_isolate.vcf > wild_isolate.vcf.gz
-    tabix -p vcf wild_isolate.vcf.gz
-
-    """
-}
-
-process gatk_to_diploid {
+    tag { chrom }
 
     input:
-      set file("wild_isolate.vcf.gz"), file("wild_isolate.vcf.gz.tbi") from raw_wild_isolate_vcf
+        set file(union_vcfs:"union_vcfs.txt"), val(chrom) from union_vcfs_in
 
     output:
-      set file("WI.${date}.raw.vcf.gz"), file("WI.${date}.raw.vcf.gz.tbi") into raw_wild_isolate_diploid_vcf
-
-
-    """
-        bcftools view wild_isolate.vcf.gz | \\
-        sed -E 's/\\t([0-9\\.]+):/\\t\\1\\/\\1:/g' | \\
-        bgzip -c --threads ${task.cpus} > WI.${date}.raw.vcf.gz
-        tabix -p vcf WI.${date}.raw.vcf.gz
-    """
-}
-
-// To save some steps in this process we can incorporate TYPE in info field, this will prevent the need to split and apply indel filters 
-
-process apply_filters {
-
-    publishDir "${params.out}/variation", mode: 'copy'
-
-    cpus params.cores
-
-    input:
-        set file(unionvcf), file(unionvcfindex) from raw_wild_isolate_diploid_vcf
-
-    output:
-        set file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi") into filtered_vcf
-        set val('filtered'), file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi") into filtered_vcf_stat
-        file("WI.${date}.soft-filter.stats.txt") into soft_filter_stats
+        val(chrom) into contigs_list_in
+        file("${chrom}.merged.raw.vcf.gz") into raw_vcf
 
     """
-        # Implement bash-trap; This removes files whether the process succeeds or fails.
-        function finish {
-            rm -f wi_norm.vcf.gz
-            rm -f indel_soft_filters.vcf.gz
-            rm -f snps.vcf.gz
-            rm -f snp_indel_soft_filters.vcf
-            rm -f wi_qual.vcf
-        }
-        trap finish EXIT
-
-
-        gatk-launch VariantFiltration \\
-            -R ${reference_handle_uncompressed} \\
-            --variant ${unionvcf} \\
-            --genotype-filter-expression "DP < ${params.min_depth}" \\
-            --genotype-filter-name "depth" \\
-            -O wi_dp.vcf
-
-        bcftools norm -m -any --threads ${task.cpus} -O z wi_dp.vcf > wi_norm.vcf.gz 
-
-        # Output indels
-        bcftools view -v indels wi_norm.vcf.gz | \\
-        bcftools filter -O v --threads ${task.cpus-1} --mode + --soft-filter indelsor --include "INFO/SOR > ${params.strand_odds_ratio}" | \\
-        bcftools filter -O z --threads ${task.cpus-1} --mode + --soft-filter indelqd --include "INFO/QD > ${params.quality_by_depth}" > indel_soft_filters.vcf.gz 
-        bcftools index --threads=${task.cpus} indel_soft_filters.vcf.gz
-
-        # Output snps
-        bcftools view -v snps -O z wi_norm.vcf.gz > snps.vcf.gz
-        bcftools index --threads=${task.cpus} snps.vcf.gz
-
-        bcftools concat --threads ${task.cpus-1} \\
-                        --allow-overlaps \\
-                        indel_soft_filters.vcf.gz \\
-                        snps.vcf.gz | \\
-        bcftools filter -O v \\
-                        --mode + \\
-                        --soft-filter mapping_quality \\
-                        --include "INFO/MQ > ${params.mapping_quality}" > snp_indel_soft_filters.vcf
-
-        gatk-launch VariantFiltration \\
-            -R ${reference_handle_uncompressed} \\
-            --variant snp_indel_soft_filters.vcf \\
-            --genotype-filter-expression "( AD[1] / (AD[0] + AD[0]) ) < ${params.dv_dp}" \\
-            --genotype-filter-name "dv_dp" \\
-            --genotype-filter-expression "QD < 10.0 && AD[1] / (AD[1] + AD[0]) < ${params.dv_dp} && ReadPosRankSum < 0.0" \\
-            --genotype-filter-name "dv_dp_qd_readposranksum" \\
-            -O wi_dv_dp.vcf
-
-        bcftools norm -m +any -O v -o wi_dv_dp_norm.vcf wi_dv_dp.vcf
-
-        gatk-launch VariantFiltration \\
-            -R ${reference_handle_uncompressed} \\
-            --variant wi_dv_dp_norm.vcf \\
-            --filter-expression "QUAL < ${params.qual}" \\
-            --filter-name "quality" \\
-            -O wi_qual.vcf
-
-        bcftools filter -O z --threads ${task.cpus-1} --mode + --soft-filter high_missing --include "F_MISSING<=${params.missing}" wi_qual.vcf > WI.${date}.soft-filter.vcf.gz
-        bcftools index --threads ${task.cpus} -f WI.${date}.soft-filter.vcf.gz
-        bcftools stats --verbose WI.${date}.soft-filter.vcf.gz > WI.${date}.soft-filter.stats.txt
+        bcftools merge --threads ${task.cpus-1} --gvcf ${reference_handle} --regions ${chrom} -O z -m all --file-list ${union_vcfs} > ${chrom}.merged.raw.vcf.gz
+        bcftools index --threads ${task.cpus-1} ${chrom}.merged.raw.vcf.gz
     """
 }
 
