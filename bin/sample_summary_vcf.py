@@ -93,8 +93,7 @@ for line in vcf:
                     if anno['impact'] == 'HIGH':
                         ANN['HIGH_impact_genes'].append(anno)
 
-with open('variant_summary.json', 'w') as f:
-    f.write(json.dumps(results))
+print(json.dumps(results))
 
 
 # For BCSQ annotations
