@@ -25,10 +25,12 @@ params.cores = 6
 params.tmpdir = "tmp/"
 params.email = ""
 params.reference = "(required)"
-params.manta_path = null
-params.tiddit_discord = null
-params.snpeff_path="${workflow.workDir}/snpeff"
 
+params.tiddit_discord = null
+//params.snpeff_path="${workflow.workDir}/snpeff"
+strelka_path = params.strelka_path
+manta_path = params.manta_path
+params.snpeff_path="/projects/b1059/data/genomes/snpeff"
 
 // Compressed Reference File
 File reference = new File("${params.reference}")
@@ -493,11 +495,10 @@ process combine_telseq {
 }
 
 /*
-    ====================
-    Call Variants - GATK
-    ====================
+    ========================
+    Call Variants - Strelka2
+    ========================
     
-    Generate SM gVCFs
 */
 process call_variants_individual {
 
@@ -506,228 +507,125 @@ process call_variants_individual {
     cpus params.cores
 
     input:
-        set val(SM), file("${SM}.bam"), file("${SM}.bam.bai") from bam_snp_individual
+        set val(SM), file(smbam), file(smbam_index) from bam_snp_individual
 
     output:
-        file("${SM}.g.vcf") into individual_sites
-        file("${SM}.g.vcf.idx") into individual_sites_index
+        file("${SM}_strelka.vcf.gz") into individual_sites
+        file("${SM}_strelka.vcf.gz.csi") into individual_sites_index
 
     """
+		python2 ${strelka_path}/bin/configureStrelkaGermlineWorkflow.py \\
+			--bam ${smbam} \\
+			--referenceFasta ${reference_handle_uncompressed} \\
+			--runDir .
 
-    function split_gatk() {
-      gatk-launch HaplotypeCaller \\
-            -R ${reference_handle_uncompressed} \\
-            -I ${SM}.bam \\
-            --emit-ref-confidence GVCF \\
-            --sample-ploidy 1 \\
-            --genotyping-mode DISCOVERY \\
-            --max-genotype-count 3000 \\
-            --max-alternate-alleles 100 \\
-            --annotation DepthPerAlleleBySample \\
-            --annotation Coverage \\
-            --annotation GenotypeSummaries \\
-            --annotation TandemRepeat \\
-            --annotation StrandBiasBySample \\
-            --annotation ChromosomeCounts \\
-            --annotation AS_QualByDepth \\
-            --annotation AS_StrandOddsRatio \\
-            --annotation AS_MappingQualityRankSumTest \\
-            --annotation DepthPerSampleHC \\
-            --annotation-group StandardAnnotation \\
-            --annotation-group AS_StandardAnnotation \\
-            --annotation-group StandardHCAnnotation \\
-            -L \${1} \\
-            -O ${SM}_\${1}.g.vcf            
-    }
+		python2 runWorkflow.py -m local -j ${task.cpus-1}
 
-    export -f split_gatk
+		bcftools view -O z -o ${SM}_strelka.vcf.gz results/variants/variants.vcf.gz
 
-    parallel --verbose split_gatk {} ::: I II III IV V X MtDNA
-
-    gatk-launch CombineGVCFs \\
-        -R ${reference_handle_uncompressed} \\
-        --variant ${SM}_I.g.vcf \\
-        --variant ${SM}_II.g.vcf \\
-        --variant ${SM}_III.g.vcf \\
-        --variant ${SM}_IV.g.vcf \\
-        --variant ${SM}_V.g.vcf \\
-        --variant ${SM}_X.g.vcf \\
-        --variant ${SM}_MtDNA.g.vcf \\
-        --annotation-group StandardAnnotation \\
-        --annotation-group AS_StandardAnnotation \\
-        -O ${SM}.g.vcf 
-
-    gatk-launch IndexFeatureFile \\
-        -F ${SM}.g.vcf
-
+    bcftools index ${SM}_strelka.vcf.gz 
     """
 }
 
-// Merge gVCFs
+// Merge SM VCFs
 
-process merge_gvcfs {
+process merge_sm_vcf {
 
     cpus params.cores
 
     input:
-        file gvcfs from individual_sites.toSortedList()
+        file vcfs from individual_sites.toSortedList()
         file indices from individual_sites_index.toSortedList()
 
     output:
-        set file("wild_isolate.vcf.gz"), file("wild_isolate.vcf.gz.tbi") into raw_wild_isolate_vcf
+		set file("wild_isolate_first_call.vcf.gz"), file("wild_isolate_first_call.vcf.gz.csi") into wild_isolate_first_call
+		set file("uppercase_ref.fa"), file("uppercase_ref.fa.fai") into reference_for_normalization
 
 
     """
-    find . -name '*.g.vcf' > input.list
+		awk '{ if (\$0 !~ />/) {print toupper(\$0)} else {print \$0} }' ${reference_handle_uncompressed} > uppercase_ref.fa
+		samtools faidx uppercase_ref.fa
 
-    function combine_gvcfs() {
-    gatk-launch GenomicsDBImport \\
-        -R ${reference_handle_uncompressed} \\
-            -V input.list \\
-            --genomicsdb-workspace-path my_database_\${1} \\
-            -L \${1}
+		bcftools merge -m both --threads ${task.cpus-1} --missing-to-ref -O z ${vcfs} | \\
+		bcftools norm -m -any -Oz | \\
+		bcftools norm --fasta-ref uppercase_ref.fa -Oz -o wild_isolate_first_call.vcf.gz 
 
-    gatk-launch GenotypeGVCFs \\
-             -R ${reference_handle_uncompressed} \\
-             -new-qual \\
-             -stand-call-conf 0 \\
-            --max-genotype-count 3000 \\
-            --max-alternate-alleles 100 \\
-             --annotation DepthPerAlleleBySample \\
-             --annotation Coverage \\
-             --annotation GenotypeSummaries \\
-             --annotation TandemRepeat \\
-             --annotation StrandBiasBySample \\
-             --annotation ChromosomeCounts \\
-             --annotation AS_QualByDepth \\
-             --annotation AS_StrandOddsRatio \\
-             --annotation AS_MappingQualityRankSumTest \\
-             --annotation DepthPerSampleHC \\
-             --variant gendb://my_database_\${1} \\
-             --annotation-group StandardAnnotation \\
-             --annotation-group AS_StandardAnnotation \\
-             -L \${1} \\
-             -O wild_isolate_\${1}.vcf
-    }
-
-    export -f combine_gvcfs
-
-    parallel --verbose combine_gvcfs {} ::: I II III IV V X MtDNA
-
-    gatk-launch GatherVcfs \\
-        -R ${reference_handle_uncompressed} \\
-        -I wild_isolate_I.vcf \\
-        -I wild_isolate_II.vcf \\
-        -I wild_isolate_III.vcf \\
-        -I wild_isolate_IV.vcf \\
-        -I wild_isolate_V.vcf \\
-        -I wild_isolate_X.vcf \\
-        -I wild_isolate_MtDNA.vcf \\
-        -O wild_isolate.vcf 
-
-    bgzip --threads=${task.cpus} -c wild_isolate.vcf > wild_isolate.vcf.gz
-    tabix -p vcf wild_isolate.vcf.gz
-
+		bcftools index wild_isolate_first_call.vcf.gz
     """
 }
 
-process gatk_to_diploid {
+
+process recall_sm_vcf {
+
+	cpus params.cores
+
+    tag { SM }
 
     input:
-      set file("wild_isolate.vcf.gz"), file("wild_isolate.vcf.gz.tbi") from raw_wild_isolate_vcf
+    		set val(SM), file(smbam), file(smbam_index) from bam_snp_union
+    		set file(joint_vcf), file(joint_index) from wild_isolate_first_call
 
     output:
-      set file("WI.${date}.raw.vcf.gz"), file("WI.${date}.raw.vcf.gz.tbi") into raw_wild_isolate_diploid_vcf
+    		file "${SM}.union.vcf.gz" into recalled_vcf
+    		file "${SM}.union.vcf.gz.csi" into recalled_vcf_index
 
 
     """
-        bcftools view wild_isolate.vcf.gz | \\
-        sed -E 's/\\t([0-9\\.]+):/\\t\\1\\/\\1:/g' | \\
-        bgzip -c --threads ${task.cpus} > WI.${date}.raw.vcf.gz
-        tabix -p vcf WI.${date}.raw.vcf.gz
+	tabix -p vcf wild_isolate_first_call.vcf.gz
+    python2 ${strelka_path}/bin/configureStrelkaGermlineWorkflow.py \\
+      --bam ${smbam} \\
+      --referenceFasta ${reference_handle_uncompressed} \\
+      --forcedGT ${joint_vcf} \\
+      --runDir .
+
+    python2 runWorkflow.py -m local -j ${task.cpus-1}
+	
+	# Apply Soft filters
+	bcftools view -O v results/variants/variants.vcf.gz | \\
+	awk -v OFS='\\t' '\$0 ~ "#" {print} \$0!~"^#" {\$7 = "."; print}' | \\
+	sed 's/\\t.:/\\t.\\/.:/g' | \\
+	vk geno het-polarization - | \\
+	bcftools filter -O v --threads ${task.cpus-1} --mode + --soft-filter quality --include "QUAL >= ${params.qual} || FORMAT/GT == '0/0'" |  \\
+	bcftools filter -O v --threads ${task.cpus-1} --mode + --soft-filter min_depth --include "FORMAT/DP > ${params.min_depth}" | \\
+	bcftools filter -O v --threads ${task.cpus-1} --mode + --soft-filter mapping_quality --include "INFO/MQ > ${params.mapping_quality}" | \\
+	bcftools filter -O v --threads ${task.cpus-1} --mode + --soft-filter dv_dp --include "(FORMAT/AD[*:1])/(FORMAT/DP) >= ${params.dv_dp} || FORMAT/GT == '0/0'" | \\
+	bcftools filter -O v --threads ${task.cpus-1} --mode + --soft-filter het --exclude "(FORMAT/GT) == 'het'" | \\
+	vk geno transfer-filter - | \\
+	bcftools view -O z -o ${SM}.union.vcf.gz
+
+    bcftools index --threads ${task.cpus} ${SM}.union.vcf.gz 
     """
+
 }
 
-// To save some steps in this process we can incorporate TYPE in info field, this will prevent the need to split and apply indel filters 
-
-process apply_filters {
-
-    publishDir "${params.out}/variation", mode: 'copy'
-
-    cpus params.cores
+process merge_recalled_vcf {
 
     input:
-        set file(unionvcf), file(unionvcfindex) from raw_wild_isolate_diploid_vcf
+		file merged_recalled_deletion_vcf from recalled_vcf.toSortedList()
+		file merged_recalled_deletion_vcf_index from recalled_vcf_index.toSortedList()
+		set file(uppercasefasta), file(uppercasefasta_index) from reference_for_normalization
 
     output:
-        set file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi") into filtered_vcf
-        set val('filtered'), file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi") into filtered_vcf_stat
-        file("WI.${date}.soft-filter.stats.txt") into soft_filter_stats
+		set file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi") into filtered_vcf
+		file("WI.${date}.soft-filter.stats.txt") into soft_filter_stats
 
     """
-        # Implement bash-trap; This removes files whether the process succeeds or fails.
-        function finish {
-            rm -f wi_norm.vcf.gz
-            rm -f indel_soft_filters.vcf.gz
-            rm -f snps.vcf.gz
-            rm -f snp_indel_soft_filters.vcf
-            rm -f wi_qual.vcf
-        }
-        trap finish EXIT
+		bcftools merge -m all --threads ${task.cpus-1} -Ov ${merged_recalled_deletion_vcf} | \\
+		awk -v OFS='\\t' '\$0 ~ "#" {print} \$0!~"^#" {\$7 = "."; print}' | \\
+		sed 's/\\t.:/\\t.\\/.:/g' | \\
+		bcftools norm -m +any --fasta-ref ${uppercasefasta} -Oz | \\
+		vk filter MISSING --max=0.90 --soft-filter="high_missing" --mode=x - | \\
+		vk filter HET --max=0.10 --soft-filter="high_heterozygosity" --mode=+ - | \\
+		vk filter REF --min=1 - | \\
+		vk filter ALT --min=1 - | \\
+		vcffixup - | \\
+		bcftools view -O z - > WI.${date}.soft-filter.vcf.gz
 
-
-        gatk-launch VariantFiltration \\
-            -R ${reference_handle_uncompressed} \\
-            --variant ${unionvcf} \\
-            --genotype-filter-expression "DP < ${params.min_depth}" \\
-            --genotype-filter-name "depth" \\
-            -O wi_dp.vcf
-
-        bcftools norm -m -any --threads ${task.cpus} -O z wi_dp.vcf > wi_norm.vcf.gz 
-
-        # Output indels
-        bcftools view -v indels wi_norm.vcf.gz | \\
-        bcftools filter -O v --threads ${task.cpus-1} --mode + --soft-filter indelsor --include "INFO/SOR > ${params.strand_odds_ratio}" | \\
-        bcftools filter -O z --threads ${task.cpus-1} --mode + --soft-filter indelqd --include "INFO/QD > ${params.quality_by_depth}" > indel_soft_filters.vcf.gz 
-        bcftools index --threads=${task.cpus} indel_soft_filters.vcf.gz
-
-        # Output snps
-        bcftools view -v snps -O z wi_norm.vcf.gz > snps.vcf.gz
-        bcftools index --threads=${task.cpus} snps.vcf.gz
-
-        bcftools concat --threads ${task.cpus-1} \\
-                        --allow-overlaps \\
-                        indel_soft_filters.vcf.gz \\
-                        snps.vcf.gz | \\
-        bcftools filter -O v \\
-                        --mode + \\
-                        --soft-filter mapping_quality \\
-                        --include "INFO/MQ > ${params.mapping_quality}" > snp_indel_soft_filters.vcf
-
-        gatk-launch VariantFiltration \\
-            -R ${reference_handle_uncompressed} \\
-            --variant snp_indel_soft_filters.vcf \\
-            --genotype-filter-expression "( AD[1] / (AD[0] + AD[0]) ) < ${params.dv_dp}" \\
-            --genotype-filter-name "dv_dp" \\
-            --genotype-filter-expression "QD < 10.0 && AD[1] / (AD[1] + AD[0]) < ${params.dv_dp} && ReadPosRankSum < 0.0" \\
-            --genotype-filter-name "dv_dp_qd_readposranksum" \\
-            -O wi_dv_dp.vcf
-
-        bcftools norm -m +any -O v -o wi_dv_dp_norm.vcf wi_dv_dp.vcf
-
-        gatk-launch VariantFiltration \\
-            -R ${reference_handle_uncompressed} \\
-            --variant wi_dv_dp_norm.vcf \\
-            --filter-expression "QUAL < ${params.qual}" \\
-            --filter-name "quality" \\
-            -O wi_qual.vcf
-
-        bcftools filter -O z --threads ${task.cpus-1} --mode + --soft-filter high_missing --include "F_MISSING<=${params.missing}" wi_qual.vcf > WI.${date}.soft-filter.vcf.gz
-        bcftools index --threads ${task.cpus} -f WI.${date}.soft-filter.vcf.gz
-        bcftools stats --verbose WI.${date}.soft-filter.vcf.gz > WI.${date}.soft-filter.stats.txt
+		bcftools index --threads ${task.cpus} WI.${date}.soft-filter.vcf.gz
+		bcftools stats --verbose WI.${date}.soft-filter.vcf.gz > WI.${date}.soft-filter.stats.txt 
     """
+
 }
-
 
 filtered_vcf.into {
                     filtered_vcf_snpeff;
@@ -1234,13 +1132,13 @@ process manta_call {
 
 
     """
-        configManta.py \\
+        python2 ${manta_path}/configManta.py \\
         --bam ${SM}.bam \\
         --referenceFasta ${reference_handle_uncompressed} \\
         --outputContig \\
         --runDir results/
 
-        python results/runWorkflow.py -m local -j 8
+        python2 results/runWorkflow.py -m local -j 8
 
         cp results/results/variants/diploidSV.vcf.gz .
         cp results/results/variants/diploidSV.vcf.gz.tbi .
@@ -1539,7 +1437,8 @@ process merge_tiddit_vcf {
         params.tiddit_discord
 
     """
-        bcftools merge -m all --threads ${task.cpus-1} -Ov ${tiddit_sample_vcfs} | \\
+        bcftools merge -m all --threads ${task.cpus-1} -Ov ${tiddit_sample_vcfs} > WI.${date}.TIDDITsv.soft-filter_unsorted.vcf.gz
+
         bcftools filter --threads ${task.cpus-1} --set-GTs . --exclude 'FORMAT/FT != "PASS"' -O z | \\
         bcftools view -O z \\
                 --samples-file=<(bcftools query -l WI.${date}.TIDDITsv.soft-filter_unsorted.vcf.gz | sort) \\
