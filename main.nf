@@ -748,6 +748,7 @@ process concatenate_union_vcf {
 
     output:
         set file("soft-filter.vcf.gz"), file("soft-filter.vcf.gz.csi") into soft_filtered_concatenated
+        set val("soft"), file("soft-filter.vcf.gz"), file("soft-filter.vcf.gz.csi") into soft_sample_summary
 
     """
         for i in ${merge_vcf.join(" ")}; do
@@ -784,6 +785,7 @@ process generate_hard_vcf {
     output:
         set file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") into hard_vcf
         set val('clean'), file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") into hard_vcf_summary
+        set val("hard"), file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") into hard_sample_summary
         file("WI.${date}.hard-filter.vcf.gz.tbi")
         file("WI.${date}.hard-filter.stats.txt") into hard_filter_stats
 
@@ -858,6 +860,27 @@ process calculate_hard_vcf_summary {
     """
 }
 
+
+/*
+    Variant summary
+*/
+
+sample_summary = soft_sample_summary.concat( hard_sample_summary )
+
+process sample_variant_summary {
+
+    publishDir "${params.out}/variation", mode: 'copy'
+
+    input:
+        set val(summary_vcf), file("out.vcf.gz"), file("out.vcf.gz.csi") from sample_summary
+
+    output:
+        file("${summary_vcf}.variant_summary.json")
+
+    """
+    python sample_summary_vcf.py out.vcf.gz > ${summary_vcf}.variant_summary.json
+    """
+}
 
 /*
     ==============
