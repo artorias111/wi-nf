@@ -525,6 +525,24 @@ process call_variants {
         file("${SM}.vcf.gz") into isotype_vcf
 
     """
+
+    # Subsample high-depth bams
+    coverage=`goleft covstats ${SM}.bam | awk 'NR > 1 { printf "%5.0f", $1 }'`
+
+    if [ \${coverage} -gt 100 ];
+    then
+        echo "Coverage is high; Subsampling to 100x"
+        # Calculate fraction of reads to keep
+        frac_keep=`echo "100.0 / \${coverage}" | bc`
+        SM_use=`mktemp --suffix bam`
+        sambamba view --nthreads=${task.cpus} --show-progress --sam-input --format=bam --with-header --subsample=\${fraq_keep} ${SM}.bam > ${SM_use}
+        sambamba index --nthreads ${task.cpus} ${SM_use}
+    else
+        echo "Coverage is low; No subsampling"
+        SM_use="${SM}.bam"
+    fi;
+
+
     function process_variants {
         bcftools mpileup --redo-BAQ \\
                          --redo-BAQ \\
@@ -591,8 +609,7 @@ process merge_union_vcf_chromosome {
         set file(union_vcfs:"union_vcfs.txt"), val(chrom) from union_vcfs_in
 
     output:
-        val(chrom) into contigs_list_in
-        file("${chrom}.merged.raw.vcf.gz") into raw_vcf
+        set val(chrom), file("${chrom}.merged.vcf.gz"), file("${chrom}.merged.vcf.gz.csi") into raw_vcf
 
     """
         bcftools merge --threads ${task.cpus-1} \\
@@ -600,35 +617,11 @@ process merge_union_vcf_chromosome {
                        --regions ${chrom} \\
                        -O z \\
                        -m both \\
-                       --file-list ${union_vcfs} > ${chrom}.merged.raw.vcf.gz
-        bcftools index --threads ${task.cpus} ${chrom}.merged.raw.vcf.gz
+                       --file-list ${union_vcfs} > ${chrom}.merged.vcf.gz
+        bcftools index --threads ${task.cpus} ${chrom}.merged.vcf.gz
     """
 }
 
-// Generate a list of ordered files.
-contig_raw_vcf = CONTIG_LIST*.concat(".merged.raw.vcf.gz")
-
-process concatenate_union_vcf {
-
-    echo true
-
-    cpus params.cores
-
-    input:
-        val merge_vcf from raw_vcf.toSortedList()
-
-    output:
-        set file("merged.raw.vcf.gz"), file("merged.raw.vcf.gz.csi") into raw_vcf_concatenated
-
-    """
-        for i in ${merge_vcf.join(" ")}; do
-            ln  -s \${i} `basename \${i}`;
-        done;
-        chrom_set="";
-        bcftools concat --threads ${task.cpus-1} -O z ${contig_raw_vcf.join(" ")}  > merged.raw.vcf.gz
-        bcftools index  --threads ${task.cpus} merged.raw.vcf.gz
-    """
-}
 
 // Generates the initial soft-vcf; but it still
 // needs to be annotated with snpeff and annovar.
@@ -636,35 +629,43 @@ process generate_soft_vcf {
 
     cpus params.cores
 
+    tag { chrom }
+
     input:
-        set file("merged.raw.vcf.gz"), file("merged.raw.vcf.gz.csi") from raw_vcf_concatenated
+        set val(chrom), file("${chrom}.merged.vcf.gz"), file("${chrom}.merged.vcf.gz.csi") from raw_vcf
 
     output:
-        set file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi") into filtered_vcf
-        set val('filtered'), file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi") into filtered_vcf_stat
-        file("WI.${date}.soft-filter.stats.txt") into soft_filter_stats
+        set val(chrom), file("${chrom}.soft-filter.vcf.gz"), file("${chrom}.soft-filter.vcf.gz.csi") into soft_filtered_vcf
 
     """
-        bcftools view merged.raw.vcf.gz | \\
+        bcftools view --threads=${task.cpus-1} ${chrom}.merged.vcf.gz | \\
         vk filter MISSING --max=0.90 --soft-filter="high_missing" --mode=x - | \
         vk filter HET --max=0.10 --soft-filter="high_heterozygosity" --mode=+ - | \
         vk filter REF --min=1 - | \
         vk filter ALT --min=1 - | \
         vcffixup - | \\
-        bcftools view -O z - > WI.${date}.soft-filter.vcf.gz
-        bcftools index -f WI.${date}.soft-filter.vcf.gz
-        bcftools stats --verbose WI.${date}.soft-filter.vcf.gz > WI.${date}.soft-filter.stats.txt
+        bcftools view --threads=${task.cpus-1} -O z - > ${chrom}.soft-filter.vcf.gz
+        bcftools index --threads=${task.cpus} -f ${chrom}.soft-filter.vcf.gz
     """
 }
 
 
-filtered_vcf.into {
-                    filtered_vcf_snpeff;
-                    filtered_vcf_to_hard;
-                    filtered_vcf_gtcheck;
-                    filtered_vcf_primer;
-                  }
+/*
+    Fetch some necessary datasets
+*/
 
+process fetch_ce_gff {
+
+    executor 'local'
+
+    output:
+        file("ce.gff3.gz") into ce_gff3
+    
+    """
+        # Download the annotation file
+        wget -O ce.gff3.gz ftp://ftp.ensembl.org/pub/current_gff3/caenorhabditis_elegans/Caenorhabditis_elegans.WBcel235.91.gff3.gz
+    """
+}
 
 
 fix_snpeff_script = file("fix_snpeff_names.py")
@@ -691,44 +692,85 @@ gene_pkl.into {
                     gene_pkl_svdb;
               }
 
+
 process annotate_vcf {
 
     cpus params.cores
+
+    tag { chrom }
 
     errorStrategy 'retry'
     maxRetries 2
 
     input:
-        set file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi") from filtered_vcf_snpeff
+        set val(chrom), file("${chrom}.soft-filter.vcf.gz"), file("${chrom}.soft-filter.vcf.gz.csi") from soft_filtered_vcf
         file("gene.pkl") from gene_pkl_snpindel
+        file("ce.gff3.gz") from ce_gff3
 
     output:
-        set file("WI.${date}.snpeff.vcf.gz"), file("WI.${date}.snpeff.vcf.gz.csi") into snpeff_vcf
+        file("${chrom}.soft-annotated.vcf.gz") into soft_annotated_vcf
         file("snpeff_out.csv") into snpeff_multiqc
 
-    script:
-        """
-            # Download the annotation file           
-            wget -O ce.gff3.gz ftp://ftp.ensembl.org/pub/current_gff3/caenorhabditis_elegans/Caenorhabditis_elegans.WBcel235.91.gff3.gz
 
-            # bcftools csq
-            bcftools view --threads=${task.cpus-1} -O v WI.${date}.soft-filter.vcf.gz | \\
-            bcftools csq -O v --fasta-ref ${reference_handle} \\
-                         --gff-annot ce.gff3.gz | \\
-            snpEff eff -csvStats snpeff_out.csv \\
-            -no-downstream \\
-            -no-intergenic \\
-            -no-upstream \\
-            -dataDir ${workflow.projectDir}/snpeff \\
-            -config ${workflow.projectDir}/snpeff/snpEff.config \\
-            ${params.annotation_reference} | \\
-            bcftools view -O v | \\
-            python `which fix_snpeff_names.py` - | \\
-            bcftools view --threads=${task.cpus-1} -O z > WI.${date}.snpeff.vcf.gz
-            bcftools index --threads=${task.cpus} WI.${date}.snpeff.vcf.gz
-        """
+    """
+        # bcftools csq
+        bcftools view --threads=${task.cpus-1} -O v ${chrom}.soft-filter.vcf.gz | \\
+        bcftools csq -O v --fasta-ref ${reference_handle} \\
+                     --gff-annot ce.gff3.gz \\
+                     --phase a | \\
+        snpEff eff -csvStats snpeff_out.csv \\
+        -no-downstream \\
+        -no-intergenic \\
+        -no-upstream \\
+        -dataDir ${workflow.projectDir}/snpeff \\
+        -config ${workflow.projectDir}/snpeff/snpEff.config \\
+        ${params.annotation_reference} | \\
+        bcftools view -O v | \\
+        python `which fix_snpeff_names.py` - | \\
+        bcftools view --threads=${task.cpus-1} -O z > ${chrom}.soft-annotated.vcf.gz
+        bcftools index --threads=${task.cpus} ${chrom}.soft-annotated.vcf.gz
+    """
 
 }
+
+
+// Generate a list of ordered files.
+contig_raw_vcf = CONTIG_LIST*.concat(".soft-annotated.vcf.gz")
+
+process concatenate_union_vcf {
+
+    cpus params.cores
+
+    tag { chrom }
+
+    input:
+        val merge_vcf from soft_annotated_vcf.toSortedList()
+
+    output:
+        set file("soft-filter.vcf.gz"), file("soft-filter.vcf.gz.csi") into soft_filtered_concatenated
+
+    """
+        for i in ${merge_vcf.join(" ")}; do
+            ln  -s \${i} `basename \${i}`;
+        done;
+        chrom_set="";
+        bcftools concat --threads ${task.cpus-1} -O z ${contig_raw_vcf.join(" ")} > soft-filter.vcf.gz
+        bcftools index  --threads ${task.cpus} soft-filter.vcf.gz
+    """
+}
+
+
+
+
+soft_filtered_concatenated.into {
+                    filtered_to_annovar;
+                    filtered_vcf_to_hard;
+                    filtered_vcf_gtcheck;
+                    filtered_vcf_primer;
+                  }
+
+
+
 
 process generate_hard_vcf {
 
@@ -912,6 +954,7 @@ process calc_variant_accumulation {
     sed 's/1\\/1/1/g' | \\
     sed 's/0\\/1/NA/g' | \\
     sed 's/1\\/0/NA/g' | \\
+    sed 's/.\\/./NA/g' | \\
     gzip > impute_gts.tsv.gz
 
     Rscript --vanilla `which variant_accumulation.R`
@@ -979,6 +1022,57 @@ process make_mapping_rda_file {
 }
 
 
+/*
+    Haplotype analysis
+*/
+
+process_ibd=file("process_ibd.R")
+
+minalleles = 0.05 // Species the minimum number of samples carrying the minor allele.
+r2window = 1500 // Specifies the number of markers in the sliding window used to detect correlated markers.
+ibdtrim = 0
+r2max = 0.8
+
+process ibdseq {
+
+    publishDir params.out + "/haplotype", mode: 'copy'
+
+    tag { "ibd" }
+
+    input:
+        set file("WI.${date}.impute.vcf.gz"), file("WI.${date}.impute.vcf.gz.csi") from haplotype_vcf
+
+    output:
+        file("haplotype_length.png")
+        file("max_haplotype_sorted_genome_wide.png")
+        file("haplotype.png")
+        file("sweep_summary.tsv")
+        file("processed_haps.Rda")
+
+    """
+    minalleles=\$(bcftools query --list-samples WI.${date}.impute.vcf.gz | wc -l | awk '{ print \$0*${minalleles} }' | awk '{printf("%d\\n", \$0+=\$0<0?0:0.9)}')
+    if [[ \${minalleles} -lt 2 ]];
+    then
+        minalleles=2;
+    fi;
+    echo "minalleles=${minalleles}"
+    for chrom in I II III IV V X; do
+        java -jar `which ibdseq.r1206.jar` \\
+            gt=WI.${date}.impute.vcf.gz \\
+            out=haplotype_\${chrom} \\
+            ibdtrim=${ibdtrim} \\
+            minalleles=\${minalleles} \\
+            r2max=${r2max} \\
+            nthreads=4 \\
+            chrom=\${chrom}
+        done;
+    cat *.ibd | awk '{ print \$0 "\\t${minalleles}\\t${ibdtrim}\\t${r2window}\\t${r2max}" }' > haplotype.tsv
+    Rscript --vanilla `which process_ibd.R`
+    """
+}
+
+
+
 process download_annotation_files {
 
     executor 'local'
@@ -1028,19 +1122,19 @@ process annovar_and_output_soft_filter_vcf {
     cpus params.cores
 
     input:
-        set file("WI.${date}.snpeff.vcf.gz"), file("WI.${date}.snpeff.vcf.gz.csi") from snpeff_vcf
+        set file("WI.${date}.soft-effect.vcf.gz"), file("WI.${date}.soft-effect.vcf.gz.csi") from filtered_to_annovar
         file(track) from bed_tracks.toSortedList()
         file(track) from bed_indices.toSortedList()
         file('vcf_anno.conf') from Channel.fromPath("vcfanno.conf")
 
     output:
         set file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi"), file("WI.${date}.soft-filter.vcf.gz.tbi") into soft_filter_vcf
-        file("WI.${date}.soft-filter.stats.txt")
+        file("WI.${date}.soft-filter.stats.txt") into soft_filter_stats
 
     """
-        vcfanno -p ${task.cpus} vcf_anno.conf WI.${date}.snpeff.vcf.gz | \\
-        bcftools view -O z > WI.${date}.soft-filter.vcf.gz
-        bcftools index WI.${date}.soft-filter.vcf.gz
+        vcfanno -p ${task.cpus} vcf_anno.conf WI.${date}.soft-effect.vcf.gz | \\
+        bcftools view --threads ${task.cpus-1} -O z > WI.${date}.soft-filter.vcf.gz
+        bcftools index --threads ${task.cpus} WI.${date}.soft-filter.vcf.gz
         tabix WI.${date}.soft-filter.vcf.gz
         bcftools stats --verbose WI.${date}.soft-filter.vcf.gz > WI.${date}.soft-filter.stats.txt
     """
@@ -1139,7 +1233,7 @@ process generate_isotype_tsv {
 
 }
 
-vcf_stats = soft_filter_stats.concat( hard_filter_stats, impute_stats )
+vcf_stats = soft_filter_stats.concat ( hard_filter_stats, impute_stats )
 
 
 /*
