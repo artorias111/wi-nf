@@ -566,8 +566,65 @@ process merge_union_vcf_chromosome {
         file("${chrom}.merged.raw.vcf.gz") into raw_vcf
 
     """
-        bcftools merge --threads ${task.cpus-1} --gvcf ${reference_handle} --regions ${chrom} -O z -m all --file-list ${union_vcfs} > ${chrom}.merged.raw.vcf.gz
-        bcftools index --threads ${task.cpus-1} ${chrom}.merged.raw.vcf.gz
+        bcftools merge --threads ${task.cpus-1} \\
+                       --gvcf ${reference_handle} \\
+                       --regions ${chrom} \\
+                       -O z \\
+                       -m all \\
+                       --file-list ${union_vcfs} > ${chrom}.merged.raw.vcf.gz
+        bcftools index --threads ${task.cpus} ${chrom}.merged.raw.vcf.gz
+    """
+}
+
+// Generate a list of ordered files.
+contig_raw_vcf = CONTIG_LIST*.concat(".merged.raw.vcf.gz")
+
+process concatenate_union_vcf {
+
+    echo true
+
+    cpus params.cores
+
+    input:
+        val merge_vcf from raw_vcf.toSortedList()
+
+    output:
+        set file("merged.raw.vcf.gz"), file("merged.raw.vcf.gz.csi") into raw_vcf_concatenated
+
+    """
+        for i in ${merge_vcf.join(" ")}; do
+            ln  -s \${i} `basename \${i}`;
+        done;
+        chrom_set="";
+        bcftools concat --threads ${task.cpus-1} -O z ${contig_raw_vcf.join(" ")}  > merged.raw.vcf.gz
+        bcftools index  --threads ${task.cpus} merged.raw.vcf.gz
+    """
+}
+
+// Generates the initial soft-vcf; but it still
+// needs to be annotated with snpeff and annovar.
+process generate_soft_vcf {
+
+    cpus params.cores
+
+    input:
+        set file("merged.raw.vcf.gz"), file("merged.raw.vcf.gz.csi") from raw_vcf_concatenated
+
+    output:
+        set file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi") into filtered_vcf
+        set val('filtered'), file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi") into filtered_vcf_stat
+        file("WI.${date}.soft-filter.stats.txt") into soft_filter_stats
+
+    """
+        bcftools view merged.raw.vcf.gz | \\
+        vk filter MISSING --max=0.90 --soft-filter="high_missing" --mode=x - | \
+        vk filter HET --max=0.10 --soft-filter="high_heterozygosity" --mode=+ - | \
+        vk filter REF --min=1 - | \
+        vk filter ALT --min=1 - | \
+        vcffixup - | \\
+        bcftools view -O z - > WI.${date}.soft-filter.vcf.gz
+        bcftools index -f WI.${date}.soft-filter.vcf.gz
+        bcftools stats --verbose WI.${date}.soft-filter.vcf.gz > WI.${date}.soft-filter.stats.txt
     """
 }
 
@@ -578,6 +635,7 @@ filtered_vcf.into {
                     filtered_vcf_gtcheck;
                     filtered_vcf_primer;
                   }
+
 
 
 fix_snpeff_script = file("fix_snpeff_names.py")
