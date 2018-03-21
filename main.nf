@@ -888,7 +888,7 @@ process sample_variant_summary {
         file("${summary_vcf}.variant_summary.json")
 
     """
-    python sample_summary_vcf.py out.vcf.gz > ${summary_vcf}.variant_summary.json
+    sample_summary_vcf.py out.vcf.gz > ${summary_vcf}.variant_summary.json
     """
 }
 
