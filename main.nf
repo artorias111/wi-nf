@@ -429,7 +429,7 @@ process coverage_SM {
 
 process coverage_SM_merge {
 
-    publishDir params.out + "/alignment", mode: 'copy'
+    publishDir "${params.out}/alignment", mode: 'copy'
 
     input:
         val sm_set from isotype_coverage.toSortedList()
@@ -454,6 +454,8 @@ process coverage_SM_merge {
 */
 
 process output_mt_content {
+
+    executor 'local'
 
     publishDir params.out + "/phenotype", mode: 'copy'
 
@@ -534,7 +536,8 @@ process call_variants {
 
         # Add a trap to remove temp files
         function finish {
-            rm "${SM}.subsample.bam"
+            rm -f "${SM}.subsample.bam"
+            rm -f "${SM}.subsample.bam.bai"
         }
         trap finish EXIT
 
@@ -564,7 +567,7 @@ process call_variants {
         bcftools filter -O u --mode + --soft-filter quality --include "QUAL >= ${qual} || FORMAT/GT == '0/0'" |  \\
         bcftools filter -O u --mode + --soft-filter min_depth --include "FORMAT/DP > ${min_depth}" | \\
         bcftools filter -O u --mode + --soft-filter mapping_quality --include "INFO/MQ > ${mq}" | \\
-        bcftools filter -O v --mode + --soft-filter dv_dp --include "(FORMAT/[*:1])/(FORMAT/DP) >= ${dv_dp} || FORMAT/GT == '0/0'" | \\
+        bcftools filter -O v --mode + --soft-filter dv_dp --include "(FORMAT/AD[*:1])/(FORMAT/DP) >= ${dv_dp} || FORMAT/GT == '0/0'" | \\
         awk -v OFS="\\t" '\$0 ~ "^#" { print } \$0 ~ ":AB" { gsub("PASS","", \$7); if (\$7 == "") { \$7 = "het"; } else { \$7 = \$7 ";het"; } } \$0 !~ "^#" { print }' | \\
         awk -v OFS="\\t" '\$0 ~ "^#CHROM" { print "##FILTER=<ID=het,Description=\\"heterozygous_call_after_het_polarization\\">"; print; } \$0 ~ "^#" && \$0 !~ "^#CHROM" { print } \$0 !~ "^#" { print }' | \\
         vk geno transfer-filter - | \\
