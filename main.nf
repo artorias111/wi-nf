@@ -564,10 +564,10 @@ process call_variants {
                       --gvcf 3 \\
                       --multiallelic-caller -O v - | \\
         vk geno het-polarization - | \\
-        bcftools filter -O u --mode + --soft-filter quality --include "(QUAL >= ${qual} || FORMAT/GT == '0/0') && TYPE != 'REF'" |  \\
-        bcftools filter -O u --mode + --soft-filter min_depth --include "(FORMAT/DP > ${min_depth}) && TYPE != 'REF'" | \\
-        bcftools filter -O u --mode + --soft-filter mapping_quality --include "(INFO/MQ > ${mq}) && TYPE != 'REF'" | \\
-        bcftools filter -O v --mode + --soft-filter dv_dp --include "((FORMAT/AD[*:1])/(FORMAT/DP) >= ${dv_dp} || FORMAT/GT == '0/0') && TYPE != 'REF'" | \\
+        bcftools filter -O u --mode + --soft-filter quality --include "(QUAL >= ${qual}) || (FORMAT/GT == '0/0') || (TYPE == 'REF')" |  \\
+        bcftools filter -O u --mode + --soft-filter min_depth --include "(FORMAT/DP > ${min_depth}) || (TYPE == 'REF')" | \\
+        bcftools filter -O u --mode + --soft-filter mapping_quality --include "(INFO/MQ > ${mq}) || (TYPE == 'REF')" | \\
+        bcftools filter -O v --mode + --soft-filter dv_dp --include "((FORMAT/AD[*:1])/(FORMAT/DP) >= ${dv_dp}) || (FORMAT/GT == '0/0') || (TYPE == 'REF')" | \\
         awk -v OFS="\\t" '\$0 ~ "^#" { print } \$0 ~ ":AB" { gsub("PASS","", \$7); if (\$7 == "") { \$7 = "het"; } else { \$7 = \$7 ";het"; } } \$0 !~ "^#" { print }' | \\
         awk -v OFS="\\t" '\$0 ~ "^#CHROM" { print "##FILTER=<ID=het,Description=\\"heterozygous_call_after_het_polarization\\">"; print; } \$0 ~ "^#" && \$0 !~ "^#CHROM" { print } \$0 !~ "^#" { print }' | \\
         vk geno transfer-filter - | \\
