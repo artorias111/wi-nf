@@ -533,20 +533,19 @@ process call_variants {
     then
 
         # Add a trap to remove temp files
-        frac_bam=`mktemp --suffix bam`
         function finish {
-            rm "\${frac_bam}"
+            rm "${SM}.subsample.bam"
         }
         trap finish EXIT
 
-        echo "Coverage is high; Subsampling to 100x"
+        echo "Coverage is above 100x; Subsampling to 100x"
         # Calculate fraction of reads to keep
-        frac_keep=`echo "100.0 / \${coverage}" | bc -l | awk '{printf "%0.2f", $0 }'`
-        SM_use=${frac_bam}
-        sambamba view --nthreads=${task.cpus} --show-progress --sam-input --format=bam --with-header --subsample=\${frac_keep} ${SM}.bam > \${SM_use}
+        frac_keep=`echo "100.0 / \${coverage}" | bc -l | awk '{printf "%0.2f", \$0 }'`
+        SM_use="${SM}.subsample.bam"
+        sambamba view --nthreads=${task.cpus} --show-progress --format=bam --with-header --subsample=\${frac_keep} ${SM}.bam > \${SM_use}
         sambamba index --nthreads ${task.cpus} \${SM_use}
     else
-        echo "Coverage is low; No subsampling"
+        echo "Coverage is below 100x; No subsampling"
         SM_use="${SM}.bam"
     fi;
 
@@ -554,25 +553,25 @@ process call_variants {
     function process_variants {
         bcftools mpileup --redo-BAQ \\
                          --redo-BAQ \\
-                         -r \${1} \\
+                         -r \$1 \\
                          --gvcf 1 \\
                          --annotate DP,AD,ADF,ADR,INFO/AD,SP \\
                          --fasta-ref ${reference_handle} \${SM_use} | \\
         bcftools call --multiallelic-caller \\
                       --gvcf 3 \\
-                      --multiallelic-caller -O v  - | \\
+                      --multiallelic-caller -O v - | \\
         vk geno het-polarization - | \\
         bcftools filter -O u --mode + --soft-filter quality --include "QUAL >= ${qual} || FORMAT/GT == '0/0'" |  \\
         bcftools filter -O u --mode + --soft-filter min_depth --include "FORMAT/DP > ${min_depth}" | \\
         bcftools filter -O u --mode + --soft-filter mapping_quality --include "INFO/MQ > ${mq}" | \\
         bcftools filter -O v --mode + --soft-filter dv_dp --include "(FORMAT/[*:1])/(FORMAT/DP) >= ${dv_dp} || FORMAT/GT == '0/0'" | \\
-        awk -v OFS="\t" '\$0 ~ "^#" { print } \$0 ~ ":AB" { gsub("PASS","", \$7); if (\$7 == "") { \$7 = "het"; } else { \$7 = \$7 ";het"; } } \$0 !~ "^#" { print }' | \\
-        awk -v OFS="\t" '\$0 ~ "^#CHROM" { print "##FILTER=<ID=het,Description=\\"heterozygous_call_after_het_polarization\\">"; print; } \$0 ~ "^#" && \$0 !~ "^#CHROM" { print } \$0 !~ "^#" { print }' | \\
+        awk -v OFS="\\t" '\$0 ~ "^#" { print } \$0 ~ ":AB" { gsub("PASS","", \$7); if (\$7 == "") { \$7 = "het"; } else { \$7 = \$7 ";het"; } } \$0 !~ "^#" { print }' | \\
+        awk -v OFS="\\t" '\$0 ~ "^#CHROM" { print "##FILTER=<ID=het,Description=\\"heterozygous_call_after_het_polarization\\">"; print; } \$0 ~ "^#" && \$0 !~ "^#CHROM" { print } \$0 !~ "^#" { print }' | \\
         vk geno transfer-filter - | \\
-        bcftools norm --check-ref s --fasta-ref ${reference_handle} | \\
-        bcftools view -O z > ${SM}.\${1}.vcf.gz
+        bcftools norm -O z --check-ref s --fasta-ref ${reference_handle} > ${SM}.\$1.vcf.gz
     }
 
+    export SM_use;
     export -f process_variants
 
     contigs="`samtools view -H ${SM}.bam | grep -Po 'SN:([^\\W]+)' | cut -c 4-40`"
