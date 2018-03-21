@@ -622,8 +622,7 @@ process merge_union_vcf_chromosome {
         set val(chrom), file("${chrom}.merged.vcf.gz"), file("${chrom}.merged.vcf.gz.csi") into raw_vcf
 
     """
-        bcftools merge --threads ${task.cpus-2} \\
-                       --gvcf ${reference_handle} \\
+        bcftools merge --gvcf ${reference_handle} \\
                        --regions ${chrom} \\
                        -O z \\
                        -m both \\
