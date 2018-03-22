@@ -77,21 +77,24 @@ for line in vcf:
             results[sample]["gt_count"][gt_name][str(genotype_counts[gt])] = 1
     
         for anno in ANN_annotations:
-            if allele_set.index(anno.get('allele')) in gt_num:
-                ANN = results[sample]['ANN']
-                gt_alleles = [allele_set[x] for x in gt_num[:-1]]
+            try:
+                if allele_set.index(anno.get('allele')) in gt_num:
+                    ANN = results[sample]['ANN']
+                    gt_alleles = [allele_set[x] for x in gt_num[:-1]]
 
-                # Initialize counters
-                if 'impact' not in ANN.keys():
-                    ANN['impact'], ANN['effect'], ANN['transcript_biotype'] = defaultdict(int), defaultdict(int), defaultdict(int)
-                    ANN['HIGH_impact_genes'] = []
-                if anno['allele'] == gt_alleles:
-                    ANN['impact'][anno['impact']] += 1
-                    for eff in anno['effect'].split("&"):
-                        ANN['effect'][eff] += 1
-                    ANN['transcript_biotype'][anno['transcript_biotype']] += 1
-                    if anno['impact'] == 'HIGH':
-                        ANN['HIGH_impact_genes'].append(anno)
+                    # Initialize counters
+                    if 'impact' not in ANN.keys():
+                        ANN['impact'], ANN['effect'], ANN['transcript_biotype'] = defaultdict(int), defaultdict(int), defaultdict(int)
+                        ANN['HIGH_impact_genes'] = []
+                    if anno['allele'] == gt_alleles:
+                        ANN['impact'][anno['impact']] += 1
+                        for eff in anno['effect'].split("&"):
+                            ANN['effect'][eff] += 1
+                        ANN['transcript_biotype'][anno['transcript_biotype']] += 1
+                        if anno['impact'] == 'HIGH':
+                            ANN['HIGH_impact_genes'].append(anno)
+            except ValueError:
+                pass
 
 print(json.dumps(results))
 
