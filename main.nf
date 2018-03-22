@@ -709,9 +709,6 @@ process annotate_vcf {
 
     tag { chrom }
 
-    errorStrategy 'retry'
-    maxRetries 2
-
     input:
         set val(chrom), file("${chrom}.soft-filter.vcf.gz"), file("${chrom}.soft-filter.vcf.gz.csi") from soft_filtered_vcf
         file("gene.pkl") from gene_pkl_snpindel
