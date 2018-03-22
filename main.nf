@@ -980,11 +980,8 @@ process calc_variant_accumulation {
     """
     bcftools query -f "[%GT\t]\n" WI.${date}.hard-filter.vcf.gz  | \
     awk '{ gsub(":GT", "", \$0); gsub("(# )?\\[[0-9]+\\]","",\$0); print \$0 }' | \\
-    sed 's/0\\/0/0/g' | \\
-    sed 's/1\\/1/1/g' | \\
-    sed 's/0\\/1/NA/g' | \\
-    sed 's/1\\/0/NA/g' | \\
-    sed 's/.\\/./NA/g' | \\
+    sed -r 's/([0-9\\.]+)\\/([0-9\\.]+)/\\1/g' | \\
+    sed 's/./NA/g' | \\
     gzip > impute_gts.tsv.gz
 
     Rscript --vanilla `which variant_accumulation.R`
