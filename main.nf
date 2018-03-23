@@ -707,12 +707,12 @@ process annotate_vcf {
 
     cpus params.cores
 
+    cache 'deep'
+
     tag { chrom }
 
     input:
-        set val(chrom), file("${chrom}.soft-filter.vcf.gz"), file("${chrom}.soft-filter.vcf.gz.csi") from soft_filtered_vcf
-        file("gene.pkl") from gene_pkl_snpindel
-        file("ce.gff3.gz") from ce_gff3
+        set val(chrom), file("${chrom}.soft-filter.vcf.gz"), file("${chrom}.soft-filter.vcf.gz.csi"), file("gene.pkl"), file("ce.gff3.gz") from soft_filtered_vcf.spread(gene_pkl_snpindel).spread(ce_gff3)
 
     output:
         file("${chrom}.soft-annotated.vcf.gz") into soft_annotated_vcf
@@ -733,7 +733,7 @@ process annotate_vcf {
         -config ${workflow.projectDir}/snpeff/snpEff.config \\
         ${params.annotation_reference} | \\
         bcftools view -O v | \\
-        python `which fix_snpeff_names.py` - | \\
+        fix_snpeff_names.py - | \\
         bcftools view --threads=${task.cpus-1} -O z > ${chrom}.soft-annotated.vcf.gz
         bcftools index --threads=${task.cpus} ${chrom}.soft-annotated.vcf.gz
     """
@@ -798,18 +798,29 @@ process generate_hard_vcf {
 
 
     """
-        # Generate hard-filtered (clean) vcf
-        bcftools view WI.${date}.soft-filter.vcf.gz | \\
-        bcftools filter --set-GTs . --exclude 'FORMAT/FT != "PASS"' | \\
-        vk filter MISSING --max=${params.missing} - | \\
-        vk filter HET --max=0.10 - | \\
-        vk filter REF --min=1 - | \\
-        vk filter ALT --min=1 - | \\
-        vcffixup - | \\
-        bcftools view --trim-alt-alleles -O z > WI.${date}.hard-filter.vcf.gz
-        bcftools index -f WI.${date}.hard-filter.vcf.gz
+        # Generate hard-filtered VCF
+        function generate_hard_filter {
+            bcftools view -O u --regions \${1} WI.${date}.soft-filter.vcf.gz | \\
+            bcftools norm -O u -m+ --fasta-ref ${reference_handle} --rm-dup both - | \\
+            bcftools filter -O u --set-GTs . --exclude 'FORMAT/FT != "PASS"' - | \\
+            bcftools filter -O u --include 'F_MISSING  <= ${params.missing}' - | \\
+            bcftools filter -O u --include '(COUNT(GT="het")/N_SAMPLES <= 0.10)' - | \\
+            bcftools view -O v --min-af 0.0000000000001 --max-af 0.999999999999 | \\
+            vcffixup - | \\
+            bcftools view -O z --trim-alt-alleles > \${1}.vcf.gz
+        }
+
+        export -f generate_hard_filter
+
+        parallel --verbose generate_hard_filter {} ::: I II III IV V X MtDNA
+
+        bcftools concat -O z I.vcf.gz II.vcf.gz III.vcf.gz IV.vcf.gz V.vcf.gz X.vcf.gz MtDNA.vcf.gz > WI.${date}.hard-filter.vcf.gz
+        bcftools index --threads ${task.cpus} WI.${date}.hard-filter.vcf.gz
         tabix WI.${date}.hard-filter.vcf.gz
         bcftools stats --verbose WI.${date}.hard-filter.vcf.gz > WI.${date}.hard-filter.stats.txt
+
+        # Remove extra files
+        rm I.vcf.gz II.vcf.gz III.vcf.gz IV.vcf.gz V.vcf.gz X.vcf.gz MtDNA.vcf.gz
     """
 }
 

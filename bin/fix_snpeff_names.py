@@ -4,10 +4,12 @@ import pickle
 import urllib.request, urllib.parse, urllib.error
 import gzip
 from cyvcf2 import VCF, Writer
+import os.path
+
 
 if __name__ == "__main__":
     # Download the current set of gene IDs
-    if len(sys.argv) == 1:
+    if len(sys.argv) == 1 and not os.path.isfile("gene.pkl"):
         urllib.request.urlretrieve('ftp://ftp.wormbase.org/pub/wormbase/species/c_elegans/annotation/geneIDs/c_elegans.PRJNA13758.current.geneIDs.txt.gz', 'gene_ids.txt.gz')
         with gzip.open('gene_ids.txt.gz', 'rb') as f:
             gene_set = [x.decode('utf8').split(',') for x in f.read().splitlines()]
