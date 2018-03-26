@@ -649,10 +649,9 @@ process generate_soft_vcf {
 
     """
         bcftools view --threads=${task.cpus-1} ${chrom}.merged.vcf.gz | \\
-        vk filter MISSING --max=0.90 --soft-filter="high_missing" --mode=x - | \
-        vk filter HET --max=0.10 --soft-filter="high_heterozygosity" --mode=+ - | \
-        vk filter REF --min=1 - | \
-        vk filter ALT --min=1 - | \
+        bcftools filter -O u --mode=+x --soft-filter="high_missing" --include 'F_MISSING  <= ${params.missing}' - | \\
+        bcftools filter -O u --mode=+x --soft-filter="high_heterozygosity" --include '(COUNT(GT="het")/N_SAMPLES <= 0.10)' - | \\
+        bcftools view -O v --min-af 0.0000000000001 --max-af 0.999999999999 | \\
         vcffixup - | \\
         bcftools view --threads=${task.cpus-1} -O z - > ${chrom}.soft-filter.vcf.gz
         bcftools index --threads=${task.cpus} -f ${chrom}.soft-filter.vcf.gz
