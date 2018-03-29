@@ -1085,6 +1085,7 @@ process ibdseq {
         file("haplotype.png")
         file("sweep_summary.tsv")
         file("processed_haps.Rda")
+        file("haplotype_plot_df.Rda")
 
     """
     minalleles=\$(bcftools query --list-samples WI.${date}.impute.vcf.gz | wc -l | awk '{ print \$0*${minalleles} }' | awk '{printf("%d\\n", \$0+=\$0<0?0:0.9)}')

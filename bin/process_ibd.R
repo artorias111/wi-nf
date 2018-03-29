@@ -212,7 +212,6 @@ save(processed_haps, file = 'processed_haps.Rda')
 color_plotpoint <- processed_haps[[5]] %>%
   dplyr::mutate(cvalue = row_number()) %>%
   dplyr::rename(color = value)
-
 plot_df <-
   processed_haps[[3]] %>%
   dplyr::rename(isotype=haplotype,
@@ -248,7 +247,21 @@ plot_df <-
   dplyr::group_by(chromosome) %>%
   dplyr::mutate(max_swept_haplotype_length = max(isotype_swept_haplotype_length)) %>%
   dplyr::group_by(chromosome, isotype) %>%
-  dplyr::mutate(max_haplotype_shared = isotype_swept_haplotype_length / max_swept_haplotype_length)
+  dplyr::mutate(max_haplotype_shared = isotype_swept_haplotype_length / max_swept_haplotype_length) %>%
+  dplyr::mutate(filtered_swept_haplotype_len = ifelse(
+    (
+      (hap_length > 1E5)
+      &
+        (max_haplotype_shared > 0.05)
+      &
+        (swept_haplotype == TRUE)
+    ), hap_length, 0)
+  ) %>%
+  dplyr::mutate(filtered_sweep_len = sum(filtered_swept_haplotype_len), 
+                filtered_sweep_ratio =  (sum(filtered_swept_haplotype_len) / max_swept_haplotype_length),
+                is_swept = (sum(filtered_swept_haplotype_len) / max_swept_haplotype_length) > 0.05)
+
+save(plot_df, file = "haplotype_plot_df.Rda")
 
 
 
