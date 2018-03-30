@@ -213,6 +213,8 @@ save(processed_haps, file = 'processed_haps.Rda')
 color_plotpoint <- processed_haps[[5]] %>%
   dplyr::mutate(cvalue = row_number()) %>%
   dplyr::rename(color = value)
+
+
 plot_df <-
   processed_haps[[3]] %>%
   dplyr::rename(isotype=haplotype,
@@ -251,41 +253,16 @@ plot_df <-
   dplyr::mutate(max_haplotype_shared = isotype_swept_haplotype_length / max_swept_haplotype_length) %>%
   dplyr::mutate(filtered_swept_haplotype_len = ifelse(
     (
-      (hap_length > 1E5)
+      (hap_length > 5E5)
       &
-        (max_haplotype_shared > 0.05)
+        (max_haplotype_shared > 0.03)
       &
         (swept_haplotype == TRUE)
     ), hap_length, 0)
   ) %>%
   dplyr::mutate(filtered_sweep_len = sum(filtered_swept_haplotype_len), 
                 filtered_sweep_ratio =  (sum(filtered_swept_haplotype_len) / max_swept_haplotype_length),
-                is_swept = (sum(filtered_swept_haplotype_len) / max_swept_haplotype_length) > 0.05)
-
-
-plot_df %>%
-  dplyr::ungroup() %>%
-  dplyr::select(chromosome, start, stop, swept_haplotype) %>%
-  dplyr::filter(swept_haplotype) %>%
-  dplyr::mutate(start = as.character(start), stop=as.character(stop)) %>%
-  dplyr::select(chromosome, start, stop) %>%
-  dplyr::arrange(chromosome, start, stop) %>%
-  readr::write_tsv("sweep_ranges.out.bed", col_names=FALSE)
-
-# Need to do this outside of R... work in progress
-# bedtools genomecov -i sweep_ranges.out.bed -g ce.genome -bg > out.bed
-
-sweep_cov <- readr::read_tsv("out.bed", col_names = c("CHROM", "START", "END", "DEPTH")) %>%
-             dplyr::mutate(region_len = END - START) %>%
-             dplyr::filter(region_len > 1E5)
-genetic_scale <- function(n) {
-  paste0(n/1E6, "Mb")
-}
-
-ggplot(sweep_cov) +
-  geom_rect(aes(xmin = START, xmax = END, ymin=0, ymax=DEPTH), fill='black') +
-  facet_grid(~CHROM) +
-  scale_x_continuous(labels = genetic_scale)
+                is_swept = (sum(filtered_swept_haplotype_len) / max_swept_haplotype_length) > 0.03)
 
 save(plot_df, file = "haplotype_plot_df.Rda")
 
