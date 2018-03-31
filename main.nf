@@ -29,6 +29,7 @@ params.reference = "(required)"
 params.manta_path = null
 params.tiddit_discord = null
 params.snpeff_path="${workflow.workDir}/snpeff"
+params.call_sv = false
 
 
 // Compressed Reference File
@@ -634,7 +635,6 @@ process merge_union_vcf_chromosome {
 
 
 // Generates the initial soft-vcf; but it still
-// needs to be annotated with snpeff and annovar.
 process generate_soft_vcf {
 
     cpus params.cores
@@ -653,6 +653,7 @@ process generate_soft_vcf {
         bcftools filter -O u --mode=+x --soft-filter="high_heterozygosity" --include '(COUNT(GT="het")/N_SAMPLES <= 0.10)' - | \\
         bcftools view -O v --min-af 0.0000000000001 --max-af 0.999999999999 | \\
         vcffixup - | \\
+        bcftools norm -O u -m +both --rm-dup both --fasta-ref ${reference_handle} | \\
         bcftools view --threads=${task.cpus-1} -O z - > ${chrom}.soft-filter.vcf.gz
         bcftools index --threads=${task.cpus} -f ${chrom}.soft-filter.vcf.gz
     """
@@ -706,12 +707,16 @@ process annotate_vcf {
 
     cpus params.cores
 
-    cache 'deep'
-
     tag { chrom }
 
+    cache 'deep'
+
     input:
-        set val(chrom), file("${chrom}.soft-filter.vcf.gz"), file("${chrom}.soft-filter.vcf.gz.csi"), file("gene.pkl"), file("ce.gff3.gz") from soft_filtered_vcf.spread(gene_pkl_snpindel).spread(ce_gff3)
+        set val(chrom), file("${chrom}.soft-filter.vcf.gz"), file("${chrom}.soft-filter.vcf.gz.csi") from soft_filtered_vcf
+        file 'snpeff.config' from file("${baseDir}/snpeff_data/snpEff.config")
+        file 'snpeff_data' from file("${baseDir}/snpeff_data")
+        file 'ce.gff3.gz' from ce_gff3
+        file 'gene.pkl' from gene_pkl_snpindel
 
     output:
         file("${chrom}.soft-annotated.vcf.gz") into soft_annotated_vcf
@@ -725,11 +730,12 @@ process annotate_vcf {
                      --gff-annot ce.gff3.gz \\
                      --phase a | \\
         snpEff eff -csvStats snpeff_out.csv \\
-        -no-downstream \\
-        -no-intergenic \\
-        -no-upstream \\
-        -dataDir ${workflow.projectDir}/snpeff \\
-        -config ${workflow.projectDir}/snpeff/snpEff.config \\
+                   -no-downstream \\
+                   -no-intergenic \\
+                   -no-upstream \\
+                   -nodownload \\
+        -dataDir . \\
+        -config snpeff.config \\
         ${params.annotation_reference} | \\
         bcftools view -O v | \\
         fix_snpeff_names.py - | \\
@@ -750,19 +756,19 @@ process concatenate_union_vcf {
     tag { chrom }
 
     input:
-        val merge_vcf from soft_annotated_vcf.toSortedList()
+        val merge_vcf from soft_annotated_vcf.collect()
 
     output:
-        set file("soft-filter.vcf.gz"), file("soft-filter.vcf.gz.csi") into soft_filtered_concatenated
-        set val("soft"), file("soft-filter.vcf.gz"), file("soft-filter.vcf.gz.csi") into soft_sample_summary
+        set file("full.soft-filter.vcf.gz"), file("full.soft-filter.vcf.gz.csi") into soft_filtered_concatenated
+        set val("soft"), file("full.soft-filter.vcf.gz"), file("full.soft-filter.vcf.gz.csi") into soft_sample_summary
 
     """
         for i in ${merge_vcf.join(" ")}; do
             ln  -s \${i} `basename \${i}`;
         done;
         chrom_set="";
-        bcftools concat --threads ${task.cpus-1} -O z ${contig_raw_vcf.join(" ")} > soft-filter.vcf.gz
-        bcftools index  --threads ${task.cpus} soft-filter.vcf.gz
+        bcftools concat --threads ${task.cpus-1} -O z ${contig_raw_vcf.join(" ")} > full.soft-filter.vcf.gz
+        bcftools index  --threads ${task.cpus} full.soft-filter.vcf.gz
     """
 }
 
@@ -783,14 +789,14 @@ process generate_hard_vcf {
 
     cpus params.cores
 
-    publishDir params.out + "/variation", mode: 'copy'
+    publishDir "${params.out}/variation", mode: 'copy'
 
     input:
         set file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi") from filtered_vcf_to_hard
 
     output:
         set file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") into hard_vcf
-        set val('clean'), file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") into hard_vcf_summary
+        set val("hard"), file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") into hard_vcf_summary
         set val("hard"), file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") into hard_sample_summary
         file("WI.${date}.hard-filter.vcf.gz.tbi")
         file("WI.${date}.hard-filter.stats.txt") into hard_filter_stats
@@ -800,7 +806,6 @@ process generate_hard_vcf {
         # Generate hard-filtered VCF
         function generate_hard_filter {
             bcftools view -O u --regions \${1} WI.${date}.soft-filter.vcf.gz | \\
-            bcftools norm -O u -m+ --fasta-ref ${reference_handle} --rm-dup both - | \\
             bcftools filter -O u --set-GTs . --exclude 'FORMAT/FT != "PASS"' - | \\
             bcftools filter -O u --include 'F_MISSING  <= ${params.missing}' - | \\
             bcftools filter -O u --include '(COUNT(GT="het")/N_SAMPLES <= 0.10)' - | \\
@@ -828,7 +833,39 @@ hard_vcf.into {
                 tajima_bed;
                 vcf_phylo;
                 hard_vcf_variant_accumulation;
+                biallelic_snp_vcf
             }
+
+
+process generate_biallelic_snp_vcf {
+
+    cpus params.cores
+
+    publishDir "{params.out}/variation", mode: 'copy'
+
+    input:
+        set file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") from biallelic_snp_vcf
+
+    output:
+        set file("WI.${date}.hard-filter-biallelic-snp.vcf.gz"), file("WI.${date}.hard-filter-biallelic-snp.vcf.gz.csi") into haplotype_vcf
+        file("WI.${date}.hard-filter-biallelic-snp.stats.txt") into biallelic_snp_stats
+
+    """
+        bcftools view --threads ${task.cpus-1} \\
+                      -m 2 \\
+                      -M 2 \\
+                      --trim-alt-alleles \\
+                      --min-af 0.0000000000001 \\
+                      --max-af 0.999999999999 \\
+                      --include '%TYPE == "SNP"' \\
+                      -O z \\
+                      WI.${date}.hard-filter.vcf.gz > WI.${date}.hard-filter-biallelic-snp.vcf.gz
+
+        bcftools index --threads ${task.cpus} WI.${date}.hard-filter-biallelic-snp.vcf.gz
+        bcftools stats --verbose WI.${date}.hard-filter.vcf.gz > WI.${date}.hard-filter-biallelic-snp.stats.txt 
+    """
+
+}
 
 
 process calculate_gtcheck {
@@ -858,7 +895,7 @@ process calculate_hard_vcf_summary {
     publishDir params.out + "/variation", mode: 'copy'
 
     input:
-        set val('clean'), file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") from hard_vcf_summary
+        set val('hard'), file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") from hard_vcf_summary
 
     output:
         file("WI.${date}.hard-filter.genotypes.tsv")
@@ -1024,7 +1061,7 @@ process imputation {
 }
 
 
-impute_vcf.into { kinship_vcf;  mapping_vcf; haplotype_vcf }
+impute_vcf.into { kinship_vcf;  mapping_vcf; }
 
 
 process make_kinship {
@@ -1072,12 +1109,12 @@ r2max = 0.8
 
 process ibdseq {
 
-    publishDir params.out + "/haplotype", mode: 'copy'
+    publishDir "${params.out}/haplotype", mode: 'copy'
 
     tag { "ibd" }
 
     input:
-        set file("WI.${date}.impute.vcf.gz"), file("WI.${date}.impute.vcf.gz.csi") from haplotype_vcf
+        set file("WI.${date}.hard-filter-biallelic-snp.vcf.gz"), file("WI.${date}.hard-filter-biallelic-snp.vcf.gz.csi") from haplotype_vcf
 
     output:
         file("haplotype_length.png")
@@ -1088,7 +1125,7 @@ process ibdseq {
         file("haplotype_plot_df.Rda")
 
     """
-    minalleles=\$(bcftools query --list-samples WI.${date}.impute.vcf.gz | wc -l | awk '{ print \$0*${minalleles} }' | awk '{printf("%d\\n", \$0+=\$0<0?0:0.9)}')
+    minalleles=\$(bcftools query --list-samples WI.${date}.hard-filter-biallelic-snp.vcf.gz | wc -l | awk '{ print \$0*${minalleles} }' | awk '{printf("%d\\n", \$0+=\$0<0?0:0.9)}')
     if [[ \${minalleles} -lt 2 ]];
     then
         minalleles=2;
@@ -1096,7 +1133,7 @@ process ibdseq {
     echo "minalleles=${minalleles}"
     for chrom in I II III IV V X; do
         java -jar `which ibdseq.r1206.jar` \\
-            gt=WI.${date}.impute.vcf.gz \\
+            gt=WI.${date}.hard-filter-biallelic-snp.vcf.gz \\
             out=haplotype_\${chrom} \\
             ibdtrim=${ibdtrim} \\
             minalleles=\${minalleles} \\
@@ -1273,7 +1310,7 @@ process generate_isotype_tsv {
 
 vcf_stats = soft_filter_stats.concat ( hard_filter_stats, impute_stats )
 
-
+if (params.call_sv) {
 /*
     Manta-sv
 */
@@ -1283,8 +1320,7 @@ process manta_call {
     tag { SM }
 
     
-    when:
-        params.manta_path
+
 
     input:
         set val(SM), file("${SM}.bam"), file("${SM}.bam.bai") from bam_manta
@@ -1329,8 +1365,7 @@ process merge_manta_vcf {
 
     publishDir params.out + "/variation", mode: 'copy'
 
-    when:
-        params.manta_path
+
 
     input:
       file merged_deletion_vcf
@@ -1351,6 +1386,8 @@ process merge_manta_vcf {
 process prune_manta {
     
     publishDir params.out + "/variation", mode: 'copy'
+
+
 
     input:
         set file(mantavcf), file(mantaindex) from processed_manta_vcf
@@ -1397,6 +1434,8 @@ process prune_manta {
 */
 
 process delly_sv {
+    
+
 
     tag { SM }
 
@@ -1418,12 +1457,14 @@ dellybcf
     .set { deletion_bcf }
 
 process combine_delly {
-      
-  input:
-    file deletion_bcf
 
-  output:
-    file "*.bcf" into combined_delly_bcf
+
+      
+    input:
+        file deletion_bcf
+
+    output:
+        file "*.bcf" into combined_delly_bcf
 
 
   script:
@@ -1436,6 +1477,8 @@ process combine_delly {
 process recall_deletions {
         
     tag { SM }
+
+
     
     input:
         set val(SM), file("${SM}.bam"), file("${SM}.bam.bai") from bam_delly_recall
@@ -1475,6 +1518,8 @@ process combine_second_deletions {
         set file("WI.${date}.DELLYsv.germline-filter.vcf.gz"), file("WI.${date}.DELLYsv.germline-filter.vcf.gz.csi") into germline_recalled_wi_dell_sv
         file "WI.${date}.DELLYsv.raw.stats.txt" into delly_bcf_stats
 
+
+
     script:
         """
             bcftools merge -m id -O b -o WI.${date}.DELLYsv.raw.bcf ${recalled_delly_sv_bcf}
@@ -1507,8 +1552,7 @@ process delly_snpeff {
         set file("WI.${date}.DELLYsv.snpEff.vcf.gz"), file("WI.${date}.DELLYsv.snpEff.vcf.gz.csi") into snpeff_delly_vcf
         file("DELLYsv_snpeff_out.csv") into snpeff_delly_multiqc
 
-    when:
-        params.tiddit_discord
+
 
 
     script:
@@ -1550,8 +1594,7 @@ process tiddit_call_sv {
         file "*.signals.tab" into tiddit_coverage
         set val(SM), file("${SM}_tiddit.vcf") into tiddit_to_db
 
-    when:
-        params.tiddit_discord
+
 
     """
         python2 ${params.tiddit} \\
@@ -1597,8 +1640,7 @@ process merge_tiddit_vcf {
         set file("WI.${date}.TIDDITsv.soft-filter.vcf.gz"), file("WI.${date}.TIDDITsv.soft-filter.vcf.gz.csi") into softfilter_tiddit_vcf
         file("WI.${date}.TIDDITsv.soft-filter.stats.txt") into tiddit_stats
 
-    when:
-        params.tiddit_discord
+
 
     """
         bcftools merge -m all --threads ${task.cpus-1} -Ov ${tiddit_sample_vcfs} | \\
@@ -1625,8 +1667,7 @@ process tiddit_snpeff {
         set file("WI.${date}.TIDDITsv.snpEff.vcf.gz"), file("WI.${date}.TIDDITsv.snpEff.vcf.gz.csi") into snpeff_tiddit_vcf
         file("TIDDITsv_snpeff_out.csv") into snpeff_tiddit_multiqc
     
-    when:
-        params.tiddit_discord
+
 
     """
         bcftools view ${tiddit_joint_vcf} | \\
@@ -1659,8 +1700,7 @@ process merge_sv_callers {
         file("${SM}_merged_caller.vcf.gz") into sample_merged_svcaller_vcf
         file("${SM}_merged_caller.vcf.gz.csi") into sample_merged_svcaller_index
 
-    when:
-        params.tiddit_discord
+
 
     script:
       """
@@ -1696,8 +1736,7 @@ process merge_wi_sv_callers {
     output:
         file "WI.${date}.MERGEDsv.snpEff.vcf.gz" into wi_mergedsv
 
-    when:
-        params.tiddit_discord
+
 
     """
         bcftools merge -m all --threads ${task.cpus} -O z ${mergedSVvcf} > temp_merged.vcf.gz
@@ -1723,6 +1762,7 @@ process merge_wi_sv_callers {
     """
 }
 
+}
 process multiqc_report {
 
     executor 'local'
@@ -1738,12 +1778,13 @@ process multiqc_report {
         file("bam*.idxstats") from bam_idxstats_multiqc.toSortedList()
         file("picard*.stats.txt") from SM_picard_stats_set.collect()
         file("snpeff_out.csv") from snpeff_multiqc
-        file("DELLYsv_snpeff_out.csv") from snpeff_delly_multiqc
-        file("MANTAsv_snpeff_out.csv") from manta_snpeff_multiqc
-        file("WI.${date}.DELLYsv.raw.stats.txt") from delly_bcf_stats
-        file("WI.${date}.MANTAsv.soft-filter.stats.txt") from bcf_manta_stats
-        file("WI.${date}.TIDDITsv.soft-filter.stats.txt") from tiddit_stats
-        file("TIDDITsv_snpeff_out.csv") from snpeff_tiddit_multiqc
+        file("WI.${date}.hard-filter-biallelic-snp.stats.txt") from biallelic_snp_stats
+        //file("DELLYsv_snpeff_out.csv") from snpeff_delly_multiqc
+        //file("MANTAsv_snpeff_out.csv") from manta_snpeff_multiqc
+        //file("WI.${date}.DELLYsv.raw.stats.txt") from delly_bcf_stats
+        //file("WI.${date}.MANTAsv.soft-filter.stats.txt") from bcf_manta_stats
+        //file("WI.${date}.TIDDITsv.soft-filter.stats.txt") from tiddit_stats
+        //file("TIDDITsv_snpeff_out.csv") from snpeff_tiddit_multiqc
 
     output:
         file("multiqc_data/*.json") into multiqc_json_files
