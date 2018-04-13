@@ -19,7 +19,7 @@ results <- sapply(1:10, function(x) {
         )
       )
       ),
-      x = 1:249,
+      x = 1:n_samples,
       fill = list(freq = as.integer(0))
     ))$freq
   )
@@ -36,6 +36,9 @@ results <- tbl_df(results) %>%
 summarized_results <- results %>% 
   dplyr::group_by(isotypes) %>%
   dplyr::summarize(mean_sites = mean(sites))
+
+
+summarized_results %>% readr::write_tsv("variant_accumulation.tsv")
 
 
 ggplot(results) +

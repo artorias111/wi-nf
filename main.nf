@@ -194,7 +194,7 @@ process kmer_counting {
 
 process merge_kmer {
 
-    publishDir params.out + "/phenotype", mode: 'copy'
+    publishDir "${params.out}/phenotype", mode: "copy"
 
     input:
         file("kmer*.tsv") from kmer_set.collect()
@@ -351,7 +351,7 @@ process SM_idx_stats {
 
 process SM_combine_idx_stats {
 
-    publishDir params.out + "/alignment", mode: 'copy'
+    publishDir "${params.out}/alignment", mode: "copy"
 
     input:
         val bam_idxstats from bam_idxstats_set.toSortedList()
@@ -392,7 +392,7 @@ process isotype_bam_stats {
 
 process combine_isotype_bam_stats {
 
-    publishDir params.out + "/alignment", mode: 'copy'
+    publishDir "${params.out}/alignment", mode: "copy"
 
     input:
         val stat_files from SM_bam_stat_files.toSortedList()
@@ -458,7 +458,7 @@ process output_mt_content {
 
     executor 'local'
 
-    publishDir params.out + "/phenotype", mode: 'copy'
+    publishDir "${params.out}/phenotype", mode: "copy"
 
     input:
         file("isotype_coverage.full.tsv") from mt_content
@@ -495,7 +495,7 @@ process combine_telseq {
 
     executor 'local'
 
-    publishDir params.out + "/phenotype", mode: 'copy'
+    publishDir "${params.out}/phenotype", mode: 'copy'
 
     input:
         file("ind_telseq?.txt") from telseq_results.toSortedList()
@@ -760,7 +760,6 @@ process concatenate_union_vcf {
 
     output:
         set file("full.soft-filter.vcf.gz"), file("full.soft-filter.vcf.gz.csi") into soft_filtered_concatenated
-        set val("soft"), file("full.soft-filter.vcf.gz"), file("full.soft-filter.vcf.gz.csi") into soft_sample_summary
 
     """
         for i in ${merge_vcf.join(" ")}; do
@@ -772,17 +771,110 @@ process concatenate_union_vcf {
     """
 }
 
+/*
+    Download annotation tracks
+*/
+
+process download_annotation_files {
+
+    executor 'local'
+
+    errorStrategy 'retry'
+    maxRetries 5
+
+    output:
+        set val("phastcons"), file("elegans.phastcons.wib") into phastcons
+        set val("phylop"), file("elegans.phylop.wib") into phylop
+        set val("repeatmasker"), file("elegans_repeatmasker.bb") into repeatmasker
+
+    """
+        wget ftp://ftp.wormbase.org/pub/wormbase/releases/WS258/MULTI_SPECIES/hub/elegans/elegans.phastcons.wib
+        wget ftp://ftp.wormbase.org/pub/wormbase/releases/WS258/MULTI_SPECIES/hub/elegans/elegans.phylop.wib
+        wget ftp://ftp.wormbase.org/pub/wormbase/releases/WS258/MULTI_SPECIES/hub/elegans/elegans_repeatmasker.bb
+    """
+}
+
+phastcons.mix(phylop).set { wig }
+
+process wig_to_bed {
+
+    tag { track_name }
+
+    publishDir "${params.out}/tracks", mode: 'copy'
+
+    input:
+        set val(track_name), file("track.wib") from wig
+    output:
+        file("${track_name}.bed.gz") into bed_tracks
+        file("${track_name}.bed.gz.tbi") into bed_indices
+
+    """
+        bigWigToBedGraph track.wib ${track_name}.bed
+        bgzip ${track_name}.bed
+        tabix ${track_name}.bed.gz
+    """
+
+}
+
+process annovar_and_output_soft_filter_vcf {
+
+    publishDir "${params.out}/variation", mode: 'copy'
+
+    cpus params.cores
+
+    input:
+        set file("WI.${date}.soft-effect.vcf.gz"), file("WI.${date}.soft-effect.vcf.gz.csi") from soft_filtered_concatenated
+        file(track) from bed_tracks.toSortedList()
+        file(track) from bed_indices.toSortedList()
+        file('vcf_anno.conf') from Channel.fromPath("vcfanno.conf")
+
+    output:
+        set file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi") into soft_filter_vcf_annotated
+        set val("soft"), file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi") into soft_sample_summary
+        file("WI.${date}.soft-filter.stats.txt") into soft_filter_stats
+        file("WI.${date}.soft-filter.vcf.gz.tbi")
+
+    """
+        vcfanno -p ${task.cpus} vcf_anno.conf WI.${date}.soft-effect.vcf.gz | \\
+        bcftools view --threads ${task.cpus-1} -O z > WI.${date}.soft-filter.vcf.gz
+        bcftools index --threads ${task.cpus} WI.${date}.soft-filter.vcf.gz
+        tabix WI.${date}.soft-filter.vcf.gz
+        bcftools stats --verbose WI.${date}.soft-filter.vcf.gz > WI.${date}.soft-filter.stats.txt
+    """
+
+}
 
 
+soft_filter_vcf_annotated.into {
+                                 soft_filtered_vcf_to_hard;
+                                 soft_filtered_vcf_gtcheck;
+                                 soft_filter_vcf_strain;
+                                 soft_filter_vcf_isotype_list;
+                                 soft_filter_vcf_mod_tracks;
+                                 soft_filter_vcf_tsv;
+                               }
 
-soft_filtered_concatenated.into {
-                    filtered_to_annovar;
-                    filtered_vcf_to_hard;
-                    filtered_vcf_gtcheck;
-                    filtered_vcf_primer;
-                  }
 
+process generate_strain_list {
 
+    executor 'local'
+
+    input:
+        set file("WI.${date}.vcf.gz"), file("WI.${date}.vcf.gz.csi") from soft_filter_vcf_isotype_list
+
+    output:
+        file('isotype_list.tsv') into isotype_list
+
+    """
+        bcftools query -l WI.${date}.vcf.gz > isotype_list.tsv
+    """
+
+}
+
+isotype_list.into {
+    sample_summary_list;
+    sample_files_list;
+}
 
 
 process generate_hard_vcf {
@@ -792,7 +884,7 @@ process generate_hard_vcf {
     publishDir "${params.out}/variation", mode: 'copy'
 
     input:
-        set file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi") from filtered_vcf_to_hard
+        set file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi") from soft_filtered_vcf_to_hard
 
     output:
         set file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") into hard_vcf
@@ -870,10 +962,10 @@ process generate_biallelic_snp_vcf {
 
 process calculate_gtcheck {
 
-    publishDir params.out + "/concordance", mode: 'copy'
+    publishDir "${params.out}/concordance", mode: 'copy'
 
     input:
-        set file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi") from filtered_vcf_gtcheck
+        set file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi") from soft_filtered_vcf_gtcheck
 
     output:
         file("gtcheck.tsv") into gtcheck
@@ -892,7 +984,7 @@ process calculate_gtcheck {
 */
 process calculate_hard_vcf_summary {
 
-    publishDir params.out + "/variation", mode: 'copy'
+    publishDir "${params.out}/variation", mode: 'copy'
 
     input:
         set val('hard'), file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") from hard_vcf_summary
@@ -929,12 +1021,80 @@ process sample_variant_summary {
         set val(summary_vcf), file("out.vcf.gz"), file("out.vcf.gz.csi") from sample_summary
 
     output:
-        file("${summary_vcf}.variant_summary.json")
+        set val(summary_vcf), file("${summary_vcf}.variant_summary.json") into sample_summary_out
 
     """
     bcftools view out.vcf.gz | sample_summary_vcf.py - > ${summary_vcf}.variant_summary.json
     """
 }
+
+
+sample_summary_out.into {
+    sample_summary_to_tsv;
+    sample_summary_to_split
+}
+
+process parse_sample_summary {
+
+    publishDir "${params.out}/variation/sample_summary", mode: 'copy'
+
+    input:
+        set val(summary_vcf), file("${summary_vcf}.variant_summary.json") from sample_summary_to_tsv
+
+    output:
+        file("${summary_vcf}.effect_summary.json")
+        file("${summary_vcf}.impact_summary.json")
+        file("${summary_vcf}.biotype_summary.json")
+        file("${summary_vcf}.high_impact_variants.json")
+        file("${summary_vcf}.gt_count.json")
+        file("${summary_vcf}.effect_summary.tsv")
+        file("${summary_vcf}.impact_summary.tsv")
+        file("${summary_vcf}.biotype_summary.tsv")
+        file("${summary_vcf}.high_impact_variants.tsv")
+        file("${summary_vcf}.gt_count.tsv")
+
+    """
+        # Parse variant summary json
+        cat ${summary_vcf}.variant_summary.json  | jq 'keys[] as $parent | {'sample': \$parent} + .[\$parent].ANN.effect' | jq --slurp '.' > ${summary_vcf}.effect_summary.json
+        cat ${summary_vcf}.variant_summary.json  | jq -r 'keys[] as $parent | {'sample': \$parent} + .[\$parent].ANN.impact' | jq --slurp '.' > ${summary_vcf}.impact_summary.json
+        cat ${summary_vcf}.variant_summary.json  | jq -r 'keys[] as $parent | {'sample': \$parent} + .[\$parent].ANN.transcript_biotype' | jq --slurp '.' > ${summary_vcf}.biotype_summary.json
+        cat ${summary_vcf}.variant_summary.json  | jq -r 'keys[] as $parent | {'sample': \$parent} + .[\$parent].ANN.HIGH_impact_genes[]' | jq --slurp '.' > ${summary_vcf}.high_impact_variants_summary.json
+        cat ${summary_vcf}.variant_summary.json  | jq -r 'keys[] as \$parent | 
+                                                (.[\$parent].gt_count | keys[]) as $subcat | 
+                                                (.[\$parent].gt_count[$subcat] | keys[]) as \$n_sample | 
+                                                (.[\$parent].gt_count[$subcat][\$n_sample]) as \$n_count | 
+                                                {'sample': \$parent, 'gt': \$subcat, 'n_sample': (\$n_sample | tonumber), 'n_count': \$n_count} ' | jq --slurp '.' > ${summary_vcf}.gt_count_summary.json
+
+        Rscript `which sample_summary_list.R`
+    """
+
+}
+
+
+/*
+    Split out high-impact variants for display on CeNDR
+*/
+
+sample_summary_to_split_w_sample = sample_summary_to_split.combine(sample_summary_list)
+
+process split_sample_summary_high_impact {
+
+    publishDir "${params.out}/variation/sample_summary/isotype", mode: 'copy'
+
+    tag { sample }
+
+    input:
+        set val(sample), val(summary_vcf), file("${summary_vcf}.variant_summary.json") from sample_summary_to_split_w_sample
+
+    output:
+        file("${sample}.HIGH_impact_genes.json")
+
+    """
+        cat ${summary_vcf}.variant_summary.json | jq '.$sample.ANN.HIGH_impact_genes' > ${sample}.HIGH_impact_genes.json
+    """
+
+}
+
 
 /*
     ==============
@@ -954,6 +1114,7 @@ process phylo_analysis {
         set val(contig), file("${contig}.tree") into trees
 
     """
+        # genome
         if [ "${contig}" == "genome" ]
         then
             vk phylo tree nj WI.${date}.hard-filter.vcf.gz > genome.tree
@@ -1023,12 +1184,14 @@ process calc_variant_accumulation {
 
     output:
         file("variant_accumulation.pdf")
+        file("variant_accumulation.tsv")
+        file("impute_gts.tsv.gz")
 
     """
-    bcftools query -f "[%GT\t]\n" WI.${date}.hard-filter.vcf.gz  | \
-    awk '{ gsub(":GT", "", \$0); gsub("(# )?\\[[0-9]+\\]","",\$0); print \$0 }' | \\
+    bcftools query -f "[%GT\\t]\n" WI.${date}.hard-filter.vcf.gz  | \\
+    awk '{ gsub(":GT", "", \$0); gsub("(# )?[[0-9]+]","",\$0); print \$0 }' | \\
     sed -r 's/([0-9\\.]+)\\/([0-9\\.]+)/\\1/g' | \\
-    sed 's/./NA/g' | \\
+    sed 's/\\./NA/g' | \\
     gzip > impute_gts.tsv.gz
 
     Rscript --vanilla `which variant_accumulation.R`
@@ -1040,7 +1203,7 @@ process imputation {
 
     cpus params.cores
 
-    publishDir params.out + "/variation", mode: 'copy'
+    publishDir "${params.out}/variation", mode: 'copy'
 
 
     input:
@@ -1053,7 +1216,16 @@ process imputation {
         file("WI.${date}.impute.vcf.gz.tbi")
 
     """
-        beagle nthreads=${task.cpus} window=8000 overlap=3000 impute=true ne=17500 gt=WI.${date}.hard-filter.vcf.gz out=WI.${date}.impute
+
+        function perform_imputation {
+            java -jar `which beagle.jar` window=8000 overlap=3000 impute=true ne=17500 gt=WI.${date}.hard-filter.vcf.gz out=\${1}
+        }
+
+        export -f perform_imputation
+
+        parallel --verbose perform_imputation {} ::: I II III IV V X MtDNA
+
+        bcftools concat I.vcf.gz II.vcf.gz III.vcf.gz IV.vcf.gz V.vcf.gz X.vcf.gz MtDNA.vcf.gz > WI.${date}.impute.vcf.gz
         bcftools index --threads=${task.cpus} WI.${date}.impute.vcf.gz
         tabix WI.${date}.impute.vcf.gz
         bcftools stats --verbose WI.${date}.impute.vcf.gz > WI.${date}.impute.stats.txt
@@ -1066,7 +1238,7 @@ impute_vcf.into { kinship_vcf;  mapping_vcf; }
 
 process make_kinship {
 
-    publishDir params.out + "/cegwas", mode: 'copy'
+    publishDir "${params.out}/cegwas", mode: 'copy'
 
     input:
         set file("WI.${date}.impute.vcf.gz"), file("WI.${date}.impute.vcf.gz.csi") from kinship_vcf
@@ -1082,7 +1254,7 @@ process make_kinship {
 
 process make_mapping_rda_file {
 
-    publishDir params.out + "/cegwas", mode: 'copy'
+    publishDir "${params.out}/cegwas", mode: 'copy'
 
     input:
         set file("WI.${date}.impute.vcf.gz"), file("WI.${date}.impute.vcf.gz.csi") from mapping_vcf
@@ -1117,12 +1289,7 @@ process ibdseq {
         set file("WI.${date}.hard-filter-biallelic-snp.vcf.gz"), file("WI.${date}.hard-filter-biallelic-snp.vcf.gz.csi") from haplotype_vcf
 
     output:
-        file("haplotype_length.png")
-        file("max_haplotype_sorted_genome_wide.png")
-        file("haplotype.png")
-        file("sweep_summary.tsv")
-        file("processed_haps.Rda")
-        file("haplotype_plot_df.Rda")
+        file("haplotype.tsv") into haplotype_analysis
 
     """
     minalleles=\$(bcftools query --list-samples WI.${date}.hard-filter-biallelic-snp.vcf.gz | wc -l | awk '{ print \$0*${minalleles} }' | awk '{printf("%d\\n", \$0+=\$0<0?0:0.9)}')
@@ -1142,86 +1309,43 @@ process ibdseq {
             chrom=\${chrom}
         done;
     cat *.ibd | awk '{ print \$0 "\\t${minalleles}\\t${ibdtrim}\\t${r2window}\\t${r2max}" }' > haplotype.tsv
-    Rscript --vanilla `which process_ibd.R`
     """
 }
 
+process analyze_ibdseq {
 
-
-process download_annotation_files {
-
-    executor 'local'
-
-    errorStrategy 'retry'
-    maxRetries 5
-
-    output:
-        set val("phastcons"), file("elegans.phastcons.wib") into phastcons
-        set val("phylop"), file("elegans.phylop.wib") into phylop
-        set val("repeatmasker"), file("elegans_repeatmasker.bb") into repeatmasker
-
-    """
-        wget ftp://ftp.wormbase.org/pub/wormbase/releases/WS258/MULTI_SPECIES/hub/elegans/elegans.phastcons.wib
-        wget ftp://ftp.wormbase.org/pub/wormbase/releases/WS258/MULTI_SPECIES/hub/elegans/elegans.phylop.wib
-        wget ftp://ftp.wormbase.org/pub/wormbase/releases/WS258/MULTI_SPECIES/hub/elegans/elegans_repeatmasker.bb
-    """
-}
-
-phastcons.mix(phylop).set { wig }
-
-process wig_to_bed {
-
-    tag { track_name }
-
-    publishDir params.out + '/tracks', mode: 'copy'
+    publishDir "${params.out}/haplotype", mode: 'copy'
 
     input:
-        set val(track_name), file("track.wib") from wig
+        file("haplotype.tsv") from haplotype_analysis
+
     output:
-        file("${track_name}.bed.gz") into bed_tracks
-        file("${track_name}.bed.gz.tbi") into bed_indices
+        file("processed_haps.Rda")
+        file("haplotype_plot_df.Rda") into plot_df
+
 
     """
-        bigWigToBedGraph track.wib ${track_name}.bed
-        bgzip ${track_name}.bed
-        tabix ${track_name}.bed.gz
+        Rscript --vanilla `which process_ibd.R`
     """
-
 }
 
+process plot_ibdseq {
 
-process annovar_and_output_soft_filter_vcf {
-
-    publishDir params.out + "/variation", mode: 'copy'
-
-    cpus params.cores
+    publishDir "${params.out}/haplotype", mode: 'copy'
 
     input:
-        set file("WI.${date}.soft-effect.vcf.gz"), file("WI.${date}.soft-effect.vcf.gz.csi") from filtered_to_annovar
-        file(track) from bed_tracks.toSortedList()
-        file(track) from bed_indices.toSortedList()
-        file('vcf_anno.conf') from Channel.fromPath("vcfanno.conf")
+        file("haplotype_plot_df.Rda") from plot_df
 
     output:
-        set file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi"), file("WI.${date}.soft-filter.vcf.gz.tbi") into soft_filter_vcf
-        file("WI.${date}.soft-filter.stats.txt") into soft_filter_stats
+        file("haplotype_length.png")
+        file("max_haplotype_sorted_genome_wide.png")
+        file("haplotype.png")
+        file("sweep_summary.tsv")
 
     """
-        vcfanno -p ${task.cpus} vcf_anno.conf WI.${date}.soft-effect.vcf.gz | \\
-        bcftools view --threads ${task.cpus-1} -O z > WI.${date}.soft-filter.vcf.gz
-        bcftools index --threads ${task.cpus} WI.${date}.soft-filter.vcf.gz
-        tabix WI.${date}.soft-filter.vcf.gz
-        bcftools stats --verbose WI.${date}.soft-filter.vcf.gz > WI.${date}.soft-filter.stats.txt
+        Rscript --vanilla `which plot_ibd.R`
     """
-
 }
-
-soft_filter_vcf.into {
-                        soft_filter_vcf_strain;
-                        soft_filter_vcf_isotype_list;
-                        soft_filter_vcf_mod_tracks;
-                        soft_filter_vcf_tsv
-                     }
 
 
 mod_tracks = Channel.from(["LOW", "MODERATE", "HIGH", "MODIFIER"])
@@ -1230,12 +1354,12 @@ soft_filter_vcf_mod_tracks.spread(mod_tracks).set { mod_track_set }
 
 process generate_mod_tracks {
 
-    publishDir params.out + '/tracks', mode: 'copy'
+    publishDir "${params.out}/tracks", mode: 'copy'
 
     tag { severity }
 
     input:
-        set file("WI.${date}.vcf.gz"), file("WI.${date}.vcf.gz.csi"), file("WI.${date}.vcf.gz.tbi"), val(severity) from mod_track_set
+        set file("WI.${date}.vcf.gz"), file("WI.${date}.vcf.gz.csi"), val(severity) from mod_track_set
     output:
         set file("${date}.${severity}.bed.gz"), file("${date}.${severity}.bed.gz.tbi")
 
@@ -1248,29 +1372,13 @@ process generate_mod_tracks {
     """
 }
 
-process generate_strain_list {
 
-    executor 'local'
-
-    input:
-        set file("WI.${date}.vcf.gz"), file("WI.${date}.vcf.gz.csi"), file("WI.${date}.vcf.gz.tbi") from soft_filter_vcf_isotype_list
-
-    output:
-        file('isotype_list.tsv') into isotype_list
-
-    """
-        bcftools query -l WI.${date}.vcf.gz > isotype_list.tsv
-    """
-
-}
-
-
-isotype_list.splitText() { it.strip() } .spread(soft_filter_vcf_strain).into { isotype_set_vcf; isotype_set_tsv }
+sample_files_list.splitText() { it.strip() } .combine(soft_filter_vcf_strain).into { isotype_set_vcf; isotype_set_tsv }
 
 
 process generate_isotype_vcf {
 
-    publishDir params.out + '/isotype/vcf', mode: 'copy'
+    publishDir "${params.out}/isotype/vcf", mode: 'copy'
 
     tag { isotype }
 
@@ -1289,7 +1397,7 @@ process generate_isotype_vcf {
 
 process generate_isotype_tsv {
 
-    publishDir params.out + '/isotype/tsv', mode: 'copy'
+    publishDir "${params.out}/isotype/tsv", mode: 'copy'
 
     tag { isotype }
 
@@ -1363,7 +1471,7 @@ individual_output_index
 
 process merge_manta_vcf {
 
-    publishDir params.out + "/variation", mode: 'copy'
+    publishDir "${params.out}/variation", mode: 'copy'
 
 
 
@@ -1385,7 +1493,7 @@ process merge_manta_vcf {
 
 process prune_manta {
     
-    publishDir params.out + "/variation", mode: 'copy'
+    publishDir "${params.out}/variation", mode: 'copy'
 
 
 
@@ -1507,7 +1615,7 @@ recalled_delly_sv_index
 
 process combine_second_deletions {
         
-    publishDir params.out + "/variation", mode: 'copy'
+    publishDir "${params.out}/variation", mode: 'copy'
 
     input:
         file recalled_delly_sv_bcf
@@ -1542,7 +1650,7 @@ process delly_snpeff {
     
     cpus params.cores
 
-    publishDir params.out + "/variation", mode: 'copy'
+    publishDir "${params.out}/variation", mode: 'copy'
 
     input:
         set file(dellysv), file(dellysvindex) from germline_recalled_wi_dell_sv

@@ -5,7 +5,6 @@ library(tidyverse)
 library(igraph)
 library(dplyr)
 library(ggplot2)
-library(processx)
 
 #works, returns an intervals object, output goes to make.graphs
 make.breaks <- function(matchset, remove_small, size) {
@@ -252,17 +251,20 @@ plot_df <-
   dplyr::group_by(chromosome, isotype) %>%
   dplyr::mutate(max_haplotype_shared = isotype_swept_haplotype_length / max_swept_haplotype_length) %>%
   dplyr::mutate(filtered_swept_haplotype_len = ifelse(
-    (
-      (hap_length > 5E5)
-      &
-        (max_haplotype_shared > 0.03)
-      &
-        (swept_haplotype == TRUE)
-    ), hap_length, 0)
+                  (
+                    (hap_length > 1E6)
+                    &
+                      (max_haplotype_shared > 0.03)
+                    &
+                      (swept_haplotype == TRUE)
+                  ), hap_length, 0)
   ) %>%
   dplyr::mutate(filtered_sweep_len = sum(filtered_swept_haplotype_len), 
                 filtered_sweep_ratio =  (sum(filtered_swept_haplotype_len) / max_swept_haplotype_length),
-                is_swept = (sum(filtered_swept_haplotype_len) / max_swept_haplotype_length) > 0.03)
+                is_swept = (sum(filtered_swept_haplotype_len) / max_swept_haplotype_length) > 0.03) %>%
+  dplyr::rowwise() %>%
+  dplyr::mutate(swept_haplotype = ifelse(is_swept == F, F, swept_haplotype)) %>%
+  dplyr::ungroup()
 
 save(plot_df, file = "haplotype_plot_df.Rda")
 
@@ -344,7 +346,7 @@ sweep_summary %>%
   readr::write_tsv("sweep_summary.tsv")
 
 chrom_plots <- lapply(c("I", "II", "III", "IV", "V", "X"), function(x) {
-ranked_by_sharing <- plot_df_filtered %>%
+ranked_by_sharing <- plot_df %>%
     dplyr::ungroup() %>%
     dplyr::filter(chromosome == x) %>%
     dplyr::group_by(isotype) %>%
@@ -358,14 +360,14 @@ ranked_by_sharing <- plot_df_filtered %>%
 
 strain_labels <- ranked_by_sharing$isotype
 
-plot_df_filtered %>%
+plot_df %>%
   dplyr::filter(chromosome == x) %>%
   dplyr::select(-plotpoint) %>%
   dplyr::left_join(ranked_by_sharing) %>%
   ggplot(.,
          aes(xmin = start/1E6, xmax = stop/1E6,
              ymin = plotpoint - 0.5, ymax = plotpoint + 0.5,
-             fill = filtered_swept_haplotype)) +
+             fill = swept_haplotype)) +
   geom_rect() +
   scale_fill_manual(values = c("TRUE"="Red", "FALSE"="Gray")) +
   scale_y_continuous(breaks = 1:length(strain_labels),
