@@ -395,7 +395,7 @@ process combine_isotype_bam_stats {
     publishDir "${params.out}/alignment", mode: "copy"
 
     input:
-        val stat_files from SM_bam_stat_files.toSortedList()
+        val stat_files from SM_bam_stat_files.collect()
 
     output:
         file("isotype_bam_stats.tsv")
@@ -824,8 +824,8 @@ process annovar_and_output_soft_filter_vcf {
 
     input:
         set file("WI.${date}.soft-effect.vcf.gz"), file("WI.${date}.soft-effect.vcf.gz.csi") from soft_filtered_concatenated
-        file(track) from bed_tracks.toSortedList()
-        file(track) from bed_indices.toSortedList()
+        file(track) from bed_tracks.collect()
+        file(track) from bed_indices.collect()
         file('vcf_anno.conf') from Channel.fromPath("vcfanno.conf")
 
     output:
@@ -933,7 +933,7 @@ process generate_biallelic_snp_vcf {
 
     cpus params.cores
 
-    publishDir "{params.out}/variation", mode: 'copy'
+    publishDir "${params.out}/variation", mode: 'copy'
 
     input:
         set file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") from biallelic_snp_vcf
@@ -1055,11 +1055,11 @@ process parse_sample_summary {
 
     """
         # Parse variant summary json
-        cat ${summary_vcf}.variant_summary.json  | jq 'keys[] as $parent | {'sample': \$parent} + .[\$parent].ANN.effect' | jq --slurp '.' > ${summary_vcf}.effect_summary.json
-        cat ${summary_vcf}.variant_summary.json  | jq -r 'keys[] as $parent | {'sample': \$parent} + .[\$parent].ANN.impact' | jq --slurp '.' > ${summary_vcf}.impact_summary.json
-        cat ${summary_vcf}.variant_summary.json  | jq -r 'keys[] as $parent | {'sample': \$parent} + .[\$parent].ANN.transcript_biotype' | jq --slurp '.' > ${summary_vcf}.biotype_summary.json
-        cat ${summary_vcf}.variant_summary.json  | jq -r 'keys[] as $parent | {'sample': \$parent} + .[\$parent].ANN.HIGH_impact_genes[]' | jq --slurp '.' > ${summary_vcf}.high_impact_variants_summary.json
-        cat ${summary_vcf}.variant_summary.json  | jq -r 'keys[] as \$parent | 
+        cat ${summary_vcf}.variant_summary.json  | jq 'keys[] as \$parent | {'sample': \$parent} + .[\$parent].ANN.effect' | jq --slurp '.' > ${summary_vcf}.effect_summary.json
+        cat ${summary_vcf}.variant_summary.json  | jq 'keys[] as \$parent | {'sample': \$parent} + .[\$parent].ANN.impact' | jq --slurp '.' > ${summary_vcf}.impact_summary.json
+        cat ${summary_vcf}.variant_summary.json  | jq 'keys[] as \$parent | {'sample': \$parent} + .[\$parent].ANN.transcript_biotype' | jq --slurp '.' > ${summary_vcf}.biotype_summary.json
+        cat ${summary_vcf}.variant_summary.json  | jq 'keys[] as \$parent | {'sample': \$parent} + .[\$parent].ANN.HIGH_impact_genes[]' | jq --slurp '.' > ${summary_vcf}.high_impact_variants_summary.json
+        cat ${summary_vcf}.variant_summary.json  | jq 'keys[] as \$parent | 
                                                 (.[\$parent].gt_count | keys[]) as $subcat | 
                                                 (.[\$parent].gt_count[$subcat] | keys[]) as \$n_sample | 
                                                 (.[\$parent].gt_count[$subcat][\$n_sample]) as \$n_count | 
@@ -1383,7 +1383,7 @@ process generate_isotype_vcf {
     tag { isotype }
 
     input:
-        set val(isotype), file("WI.${date}.vcf.gz"), file("WI.${date}.vcf.gz.csi"), file("WI.${date}.vcf.gz.tbi") from isotype_set_vcf
+        set val(isotype), file("WI.${date}.vcf.gz"), file("WI.${date}.vcf.gz.csi") from isotype_set_vcf
 
     output:
         set val(isotype), file("${isotype}.${date}.vcf.gz"), file("${isotype}.${date}.vcf.gz.tbi") into isotype_ind_vcf
@@ -1402,7 +1402,7 @@ process generate_isotype_tsv {
     tag { isotype }
 
     input:
-        set val(isotype), file("WI.${date}.vcf.gz"), file("WI.${date}.vcf.gz.csi"), file("WI.${date}.vcf.gz.tbi") from isotype_set_tsv
+        set val(isotype), file("WI.${date}.vcf.gz"), file("WI.${date}.vcf.gz.csi") from isotype_set_tsv
 
     output:
         set val(isotype), file("${isotype}.${date}.tsv.gz")

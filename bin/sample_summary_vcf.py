@@ -94,7 +94,7 @@ for line in vcf:
                             anno['CHROM'] = line.CHROM
                             anno['POS'] = line.POS
                             anno['REF'] = line.REF
-                            anno['ALT'] = line.ALT
+                            anno['ALT'] = ','.join(line.ALT)
                             ANN['HIGH_impact_genes'].append(anno)
             except ValueError:
                 pass
