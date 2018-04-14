@@ -1014,7 +1014,7 @@ sample_summary = soft_sample_summary.concat( hard_sample_summary )
 
 process sample_variant_summary {
 
-    tag { sample_summary }
+    tag { summary_vcf }
 
     publishDir "${params.out}/variation", mode: 'copy'
 
@@ -1037,7 +1037,7 @@ sample_summary_out.into {
 
 process parse_sample_summary {
 
-    tag { sample_summary }
+    tag { summary_vcf }
 
     publishDir "${params.out}/variation/sample_summary", mode: 'copy'
 
