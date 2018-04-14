@@ -872,7 +872,6 @@ process generate_strain_list {
 }
 
 isotype_list.into {
-    sample_summary_list;
     sample_files_list;
 }
 
@@ -1015,6 +1014,8 @@ sample_summary = soft_sample_summary.concat( hard_sample_summary )
 
 process sample_variant_summary {
 
+    tag { sample_summary }
+
     publishDir "${params.out}/variation", mode: 'copy'
 
     input:
@@ -1036,6 +1037,8 @@ sample_summary_out.into {
 
 process parse_sample_summary {
 
+    tag { sample_summary }
+
     publishDir "${params.out}/variation/sample_summary", mode: 'copy'
 
     input:
@@ -1043,15 +1046,17 @@ process parse_sample_summary {
 
     output:
         file("${summary_vcf}.effect_summary.json")
-        file("${summary_vcf}.impact_summary.json")
-        file("${summary_vcf}.biotype_summary.json")
-        file("${summary_vcf}.high_impact_variants.json")
-        file("${summary_vcf}.gt_count.json")
         file("${summary_vcf}.effect_summary.tsv")
+        file("${summary_vcf}.impact_summary.json")
         file("${summary_vcf}.impact_summary.tsv")
+        file("${summary_vcf}.biotype_summary.json")
         file("${summary_vcf}.biotype_summary.tsv")
+        file("${summary_vcf}.high_impact_variants.json")
         file("${summary_vcf}.high_impact_variants.tsv")
+        file("${summary_vcf}.gt_count.json")
         file("${summary_vcf}.gt_count.tsv")
+        file("${summary_vcf}.isotype_summary.json")
+        file("${summary_vcf}.isotype_summary.tsv")
 
     """
         # Parse variant summary json
@@ -1065,32 +1070,26 @@ process parse_sample_summary {
                                                 (.[\$parent].gt_count[$subcat][\$n_sample]) as \$n_count | 
                                                 {'sample': \$parent, 'gt': \$subcat, 'n_sample': (\$n_sample | tonumber), 'n_count': \$n_count} ' | jq --slurp '.' > ${summary_vcf}.gt_count_summary.json
 
+
+        cat soft.variant_summary.json | \
+            jq 'keys[] as $parent |
+                (.[\$parent].gt_count.homozygous_alt["1"] + .[\$parent].gt_count.homozygous_ref["1"]) as \$singleton | 
+                ([.[\$parent].gt_count.homozygous_alt[]?]  | add) as \$alt_calls |
+                ([.[\$parent].gt_count.homozygous_ref[]?] | add) as \$ref_calls |
+                ([.[\$parent].gt_count.heterozygous[]?]  | add) as \$het_calls |
+                ([.[\$parent].gt_count.missing[]?]  | add) as \$missing_calls |
+                (\$alt_calls + \$ref_calls + \$het_calls) as \$n_variants |
+                .[$parent].ANN.impact.HIGH as $high_impact |
+                {"isotype": \$parent,
+                 "singletons": \$singleton,
+                 "alt_calls": \$alt_calls,
+                 "ref_calls": \$ref_calls,
+                 "het_calls": \$het_calls,
+                 "missing_calls": \$missing_calls,
+                 "n_calls": \$n_variants,
+                 "high_impact_variants": \$high_impact}' > ${summary_vcf}.isotype_summary.json
+
         Rscript `which sample_summary_list.R`
-    """
-
-}
-
-
-/*
-    Split out high-impact variants for display on CeNDR
-*/
-
-sample_summary_to_split_w_sample = sample_summary_to_split.combine(sample_summary_list)
-
-process split_sample_summary_high_impact {
-
-    publishDir "${params.out}/variation/sample_summary/isotype", mode: 'copy'
-
-    tag { sample }
-
-    input:
-        set val(sample), val(summary_vcf), file("${summary_vcf}.variant_summary.json") from sample_summary_to_split_w_sample
-
-    output:
-        file("${sample}.HIGH_impact_genes.json")
-
-    """
-        cat ${summary_vcf}.variant_summary.json | jq '.$sample.ANN.HIGH_impact_genes' > ${sample}.HIGH_impact_genes.json
     """
 
 }
