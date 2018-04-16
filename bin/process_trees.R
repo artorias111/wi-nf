@@ -34,5 +34,5 @@ ggplot(data = treeSegs$edgeDT) + geom_segment(edgeMap) +
   expand = c(0,0)) +
   labs(title = contig)
 
-ggsave(paste0(contig,".pdf"), height = 45, width = 10)
+ggsave(paste0(contig,".svg"), height = 45, width = 10)
 ggsave(paste0(contig,".png"), height = 45, width = 10)  

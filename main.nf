@@ -85,15 +85,15 @@ param_summary = '''
 
 
      ▄         ▄  ▄▄▄▄▄▄▄▄▄▄▄                         ▄▄        ▄  ▄▄▄▄▄▄▄▄▄▄▄
-    ▐░▌       ▐░▌▐░░░░░░░░░░░▌                       ▐░░▌      ▐░▌▐░░░░░░░░░░░▌
+    ▐░▌       ▐░▌▐░░░░░░░░░░░▌                        ▐░░▌      ▐░▌▐░░░░░░░░░░░▌
     ▐░▌       ▐░▌ ▀▀▀▀█░█▀▀▀▀                        ▐░▌░▌     ▐░▌▐░█▀▀▀▀▀▀▀▀▀
-    ▐░▌       ▐░▌     ▐░▌                            ▐░▌▐░▌    ▐░▌▐░▌
+    ▐░▌       ▐░▌     ▐░▌                             ▐░▌▐░▌    ▐░▌▐░▌
     ▐░▌   ▄   ▐░▌     ▐░▌           ▄▄▄▄▄▄▄▄▄▄▄      ▐░▌ ▐░▌   ▐░▌▐░█▄▄▄▄▄▄▄▄▄
-    ▐░▌  ▐░▌  ▐░▌     ▐░▌          ▐░░░░░░░░░░░▌     ▐░▌  ▐░▌  ▐░▌▐░░░░░░░░░░░▌
+    ▐░▌  ▐░▌  ▐░▌     ▐░▌          ▐░░░░░░░░░░░▌      ▐░▌  ▐░▌  ▐░▌▐░░░░░░░░░░░▌
     ▐░▌ ▐░▌░▌ ▐░▌     ▐░▌           ▀▀▀▀▀▀▀▀▀▀▀      ▐░▌   ▐░▌ ▐░▌▐░█▀▀▀▀▀▀▀▀▀
-    ▐░▌▐░▌ ▐░▌▐░▌     ▐░▌                            ▐░▌    ▐░▌▐░▌▐░▌
+    ▐░▌▐░▌ ▐░▌▐░▌     ▐░▌                             ▐░▌    ▐░▌▐░▌▐░▌
     ▐░▌░▌   ▐░▐░▌ ▄▄▄▄█░█▄▄▄▄                        ▐░▌     ▐░▐░▌▐░▌
-    ▐░░▌     ▐░░▌▐░░░░░░░░░░░▌                       ▐░▌      ▐░░▌▐░▌
+    ▐░░▌     ▐░░▌▐░░░░░░░░░░░▌                        ▐░▌      ▐░░▌▐░▌
      ▀▀       ▀▀  ▀▀▀▀▀▀▀▀▀▀▀                         ▀        ▀▀  ▀
 
 
@@ -826,7 +826,7 @@ process annovar_and_output_soft_filter_vcf {
         set file("WI.${date}.soft-effect.vcf.gz"), file("WI.${date}.soft-effect.vcf.gz.csi") from soft_filtered_concatenated
         file(track) from bed_tracks.collect()
         file(track) from bed_indices.collect()
-        file('vcf_anno.conf') from Channel.fromPath("vcfanno.conf")
+        file('vcf_anno.conf') from Channel.fromPath("data/vcfanno.conf")
 
     output:
         set file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi") into soft_filter_vcf_annotated
@@ -1042,7 +1042,7 @@ process parse_sample_summary {
     publishDir "${params.out}/variation/sample_summary", mode: 'copy'
 
     input:
-        set val(summary_vcf), file("${summary_vcf}.variant_summary.json") from sample_summary_to_tsv
+        set val(summary_vcf), file("${summary_vcf}.variant_summary_in.json") from sample_summary_to_tsv
 
     output:
         file("${summary_vcf}.effect_summary.json")
@@ -1051,35 +1051,35 @@ process parse_sample_summary {
         file("${summary_vcf}.impact_summary.tsv")
         file("${summary_vcf}.biotype_summary.json")
         file("${summary_vcf}.biotype_summary.tsv")
-        file("${summary_vcf}.high_impact_variants.json")
-        file("${summary_vcf}.high_impact_variants.tsv")
-        file("${summary_vcf}.gt_count.json")
-        file("${summary_vcf}.gt_count.tsv")
+        file("${summary_vcf}.high_impact_variants_summary.json")
+        file("${summary_vcf}.high_impact_variants_summary.tsv")
+        file("${summary_vcf}.gt_count_summary.json")
+        file("${summary_vcf}.gt_count_summary.tsv")
         file("${summary_vcf}.isotype_summary.json")
         file("${summary_vcf}.isotype_summary.tsv")
 
     """
         # Parse variant summary json
-        cat ${summary_vcf}.variant_summary.json  | jq 'keys[] as \$parent | {'sample': \$parent} + .[\$parent].ANN.effect' | jq --slurp '.' > ${summary_vcf}.effect_summary.json
-        cat ${summary_vcf}.variant_summary.json  | jq 'keys[] as \$parent | {'sample': \$parent} + .[\$parent].ANN.impact' | jq --slurp '.' > ${summary_vcf}.impact_summary.json
-        cat ${summary_vcf}.variant_summary.json  | jq 'keys[] as \$parent | {'sample': \$parent} + .[\$parent].ANN.transcript_biotype' | jq --slurp '.' > ${summary_vcf}.biotype_summary.json
-        cat ${summary_vcf}.variant_summary.json  | jq 'keys[] as \$parent | {'sample': \$parent} + .[\$parent].ANN.HIGH_impact_genes[]' | jq --slurp '.' > ${summary_vcf}.high_impact_variants_summary.json
-        cat ${summary_vcf}.variant_summary.json  | jq 'keys[] as \$parent | 
-                                                (.[\$parent].gt_count | keys[]) as $subcat | 
-                                                (.[\$parent].gt_count[$subcat] | keys[]) as \$n_sample | 
-                                                (.[\$parent].gt_count[$subcat][\$n_sample]) as \$n_count | 
+        cat ${summary_vcf}.variant_summary_in.json  | jq 'keys[] as \$parent | {'sample': \$parent} + .[\$parent].ANN.effect' | jq --slurp '.' > ${summary_vcf}.effect_summary.json
+        cat ${summary_vcf}.variant_summary_in.json  | jq 'keys[] as \$parent | {'sample': \$parent} + .[\$parent].ANN.impact' | jq --slurp '.' > ${summary_vcf}.impact_summary.json
+        cat ${summary_vcf}.variant_summary_in.json  | jq 'keys[] as \$parent | {'sample': \$parent} + .[\$parent].ANN.transcript_biotype' | jq --slurp '.' > ${summary_vcf}.biotype_summary.json
+        cat ${summary_vcf}.variant_summary_in.json  | jq 'keys[] as \$parent | {'sample': \$parent} + .[\$parent].ANN.HIGH_impact_genes[]?' | jq --slurp '.' > ${summary_vcf}.high_impact_variants_summary.json
+        cat ${summary_vcf}.variant_summary_in.json  | jq 'keys[] as \$parent | 
+                                                (.[\$parent].gt_count | keys[]) as \$subcat | 
+                                                (.[\$parent].gt_count[\$subcat] | keys[]) as \$n_sample | 
+                                                (.[\$parent].gt_count[\$subcat][\$n_sample]) as \$n_count | 
                                                 {'sample': \$parent, 'gt': \$subcat, 'n_sample': (\$n_sample | tonumber), 'n_count': \$n_count} ' | jq --slurp '.' > ${summary_vcf}.gt_count_summary.json
 
 
-        cat soft.variant_summary.json | \
-            jq 'keys[] as $parent |
+        cat ${summary_vcf}.variant_summary_in.json | \
+            jq 'keys[] as \$parent |
                 (.[\$parent].gt_count.homozygous_alt["1"] + .[\$parent].gt_count.homozygous_ref["1"]) as \$singleton | 
                 ([.[\$parent].gt_count.homozygous_alt[]?]  | add) as \$alt_calls |
                 ([.[\$parent].gt_count.homozygous_ref[]?] | add) as \$ref_calls |
                 ([.[\$parent].gt_count.heterozygous[]?]  | add) as \$het_calls |
                 ([.[\$parent].gt_count.missing[]?]  | add) as \$missing_calls |
                 (\$alt_calls + \$ref_calls + \$het_calls) as \$n_variants |
-                .[$parent].ANN.impact.HIGH as $high_impact |
+                .[\$parent].ANN.impact.HIGH as \$high_impact |
                 {"isotype": \$parent,
                  "singletons": \$singleton,
                  "alt_calls": \$alt_calls,
@@ -1087,9 +1087,9 @@ process parse_sample_summary {
                  "het_calls": \$het_calls,
                  "missing_calls": \$missing_calls,
                  "n_calls": \$n_variants,
-                 "high_impact_variants": \$high_impact}' > ${summary_vcf}.isotype_summary.json
+                 "high_impact_variants": \$high_impact}' | jq --slurp '.' > ${summary_vcf}.isotype_summary.json
 
-        Rscript `which sample_summary_list.R`
+        Rscript `which process_variant_summary.R`
     """
 
 }
@@ -1158,7 +1158,7 @@ process tajima_bed {
     input:
         set file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") from tajima_bed
     output:
-        set file("WI.${date}.tajima.bed.gz"), file("WI.${date}.tajima.bed.gz.tbi")
+        set file("WI.${date}.tajima.bed.gz"), file("WI.${date}.tajima.bed.gz.tbi") into plot_tajima
 
     """
         vk tajima --no-header 100000 10000 WI.${date}.hard-filter.vcf.gz | bgzip > WI.${date}.tajima.bed.gz
@@ -1167,6 +1167,28 @@ process tajima_bed {
 
 }
 
+
+process plot_tajima {
+
+    executor 'local'
+
+    publishDir "${params.out}/popgen", mode: 'copy'
+
+    input:
+        set file("tajima.bed.gz"), file("tajima.bed.gz.tbi") from plot_tajima
+
+    output:
+        file("tajima_d.png")
+        file("tajima_d.thumb.png")
+
+    """
+        Rscript --vanilla `which plot_tajima.R`
+
+        # Generate thumbnail
+        convert tajima_d.png -density 300 -resize 200 tajima_d.thumb.png
+    """
+
+}
 
 /*
     ====================

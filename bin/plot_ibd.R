@@ -98,7 +98,7 @@ plot_df %>%
   ggplot(.,
          aes(xmin = start/1E6, xmax = stop/1E6,
              ymin = plotpoint - 0.5, ymax = plotpoint + 0.5,
-             fill = filtered_swept_haplotype)) +
+             fill = is_swept)) +
   geom_rect() +
   scale_fill_manual(values = c("TRUE"="Red", "FALSE"="Gray")) +
   scale_y_continuous(breaks = 1:length(strain_labels),
