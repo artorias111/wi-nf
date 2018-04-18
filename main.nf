@@ -673,7 +673,7 @@ process fetch_ce_gff {
     
     """
         # Download the annotation file
-        wget -O ce.gff3.gz ftp://ftp.ensembl.org/pub/current_gff3/caenorhabditis_elegans/Caenorhabditis_elegans.WBcel235.91.gff3.gz
+        wget -O ce.gff3.gz ftp://ftp.ensembl.org/pub/release-92/gff3/caenorhabditis_elegans/Caenorhabditis_elegans.WBcel235.92.gff3.gz
     """
 }
 
