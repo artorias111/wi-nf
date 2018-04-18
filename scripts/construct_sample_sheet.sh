@@ -225,6 +225,27 @@ awk  -v prefix=$prefix -v seq_folder=${seq_folder} '{
     print SM"\t"ID"\t"LB"\t"prefix"/"fq1"\t"prefix"/"fq2"\t"seq_folder
 }' | sed -n '1~2p' >> ${fq_sheet}
 
+#============================#
+#    220180405_fromNUSeq     #
+#============================#
+#
+seq_folder=20180405_fromNUSeq
+echo ${seq_folder}
+prefix=/projects/b1059/data/fastq/WI/dna/processed/${seq_folder}
+ls $prefix/*.gz -1 | xargs -n1 basename |\
+awk  -v prefix=$prefix -v seq_folder=${seq_folder} '{
+    fq1 = $1;
+    fq2 = $1;
+    gsub("1P.fq.gz", "2P.fq.gz", fq2);
+    split($0, a, "_");
+    SM = a[1];
+    ID = $1;
+    gsub("_1P.fq.gz", "", ID);
+    split($0, b, "_");
+    LB = b[2];
+    print SM"\t"ID"\t"LB"\t"prefix"/"fq1"\t"prefix"/"fq2"\t"seq_folder
+}' | sed -n '1~2p' >> ${fq_sheet}
+
 if [[ $(cut -f 2 ${fq_sheet}  | sort | uniq -c | grep -v '1 ') ]]; then
     echo "There are duplicate IDs in the sample sheet. Please review 'sample_sheet.error'"
     cat ${fq_sheet} | sort > ../sample_sheet.error
