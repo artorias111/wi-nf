@@ -805,9 +805,8 @@ process wig_to_bed {
     input:
         set val(track_name), file("track.wib") from wig
     output:
-        file("${track_name}.bed.gz") into bed_tracks
-        file("${track_name}.bed.gz.tbi") into bed_indices
-
+        set file("${track_name}.bed.gz"), file("${track_name}.bed.gz.tbi") into bed_tracks
+        
     """
         bigWigToBedGraph track.wib ${track_name}.bed
         bgzip ${track_name}.bed
@@ -820,14 +819,11 @@ process annovar_and_output_soft_filter_vcf {
 
     publishDir "${params.out}/variation", mode: 'copy'
 
-    cache 'deep'
-
     cpus params.cores
 
     input:
         set file("WI.${date}.soft-effect.vcf.gz"), file("WI.${date}.soft-effect.vcf.gz.csi") from soft_filtered_concatenated
         file(track) from bed_tracks.collect()
-        file(track) from bed_indices.collect()
         file('vcf_anno.conf') from Channel.fromPath("data/vcfanno.conf")
 
     output:
@@ -900,7 +896,7 @@ process generate_hard_vcf {
     """
         # Generate hard-filtered VCF
         function generate_hard_filter {
-            bcftools view -O u --regions \${1} WI.${date}.soft-filter.vcf.gz | \\
+            bcftools view -m2 -M2 --trim-alt-alleles -O u --regions \${1} WI.${date}.soft-filter.vcf.gz | \\
             bcftools filter -O u --set-GTs . --exclude 'FORMAT/FT != "PASS"' - | \\
             bcftools filter -O u --include 'F_MISSING  <= ${params.missing}' - | \\
             bcftools filter -O u --include '(COUNT(GT="het")/N_SAMPLES <= 0.10)' - | \\
@@ -1230,7 +1226,6 @@ process imputation {
 
     publishDir "${params.out}/variation", mode: 'copy'
 
-
     input:
         set file("WI.${date}.hard-filter.vcf.gz"), file("WI.${date}.hard-filter.vcf.gz.csi") from hard_vcf_to_impute
     output:
@@ -1243,7 +1238,7 @@ process imputation {
     """
 
         function perform_imputation {
-            java -jar `which beagle.jar` window=8000 overlap=3000 impute=true ne=17500 gt=WI.${date}.hard-filter.vcf.gz out=\${1}
+            java -jar `which beagle.jar` chrom=\${1} window=8000 overlap=3000 impute=true ne=17500 gt=WI.${date}.hard-filter.vcf.gz out=\${1}
         }
 
         export -f perform_imputation
