@@ -1239,6 +1239,7 @@ process imputation {
 
         function perform_imputation {
             java -jar `which beagle.jar` chrom=\${1} window=8000 overlap=3000 impute=true ne=17500 gt=WI.${date}.hard-filter.vcf.gz out=\${1}
+            bcftools index \${1}.vcf.gz
         }
 
         export -f perform_imputation
