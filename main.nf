@@ -753,21 +753,25 @@ process concatenate_union_vcf {
 
     cpus params.cores
 
+    publishDir "${params.out}/variation"
+
     tag { chrom }
 
     input:
         val merge_vcf from soft_annotated_vcf.collect()
 
     output:
-        set file("full.soft-filter.vcf.gz"), file("full.soft-filter.vcf.gz.csi") into soft_filtered_concatenated
+        set file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi") into soft_filtered_concatenated
+        set val("soft"), file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi") into soft_sample_summary
 
     """
         for i in ${merge_vcf.join(" ")}; do
             ln  -s \${i} `basename \${i}`;
         done;
         chrom_set="";
-        bcftools concat --threads ${task.cpus-1} -O z ${contig_raw_vcf.join(" ")} > full.soft-filter.vcf.gz
-        bcftools index  --threads ${task.cpus} full.soft-filter.vcf.gz
+        bcftools concat --threads ${task.cpus-1} -O z ${contig_raw_vcf.join(" ")} > WI.${date}.soft-filter.vcf.gz
+        bcftools index  --threads ${task.cpus} WI.${date}.soft-filter.vcf.gz
+        bcftools stats --verbose WI.${date}.soft-filter.vcf.gz > WI.${date}.soft-filter.stats.txt
     """
 }
 
@@ -815,41 +819,14 @@ process wig_to_bed {
 
 }
 
-process annovar_and_output_soft_filter_vcf {
 
-    publishDir "${params.out}/variation", mode: 'copy'
-
-    cpus params.cores
-
-    input:
-        set file("WI.${date}.soft-effect.vcf.gz"), file("WI.${date}.soft-effect.vcf.gz.csi") from soft_filtered_concatenated
-        file(track) from bed_tracks.collect()
-        file('vcf_anno.conf') from Channel.fromPath("data/vcfanno.conf")
-
-    output:
-        set file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi") into soft_filter_vcf_annotated
-        set val("soft"), file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi") into soft_sample_summary
-        file("WI.${date}.soft-filter.stats.txt") into soft_filter_stats
-        file("WI.${date}.soft-filter.vcf.gz.tbi")
-
-    """
-        vcfanno -p ${task.cpus} vcf_anno.conf WI.${date}.soft-effect.vcf.gz | \\
-        bcftools view --threads ${task.cpus-1} -O z > WI.${date}.soft-filter.vcf.gz
-        bcftools index --threads ${task.cpus} WI.${date}.soft-filter.vcf.gz
-        tabix WI.${date}.soft-filter.vcf.gz
-        bcftools stats --verbose WI.${date}.soft-filter.vcf.gz > WI.${date}.soft-filter.stats.txt
-    """
-
-}
-
-
-soft_filter_vcf_annotated.into {
+soft_filtered_concatenated.into {
                                  soft_filtered_vcf_to_hard;
                                  soft_filtered_vcf_gtcheck;
                                  soft_filter_vcf_strain;
                                  soft_filter_vcf_isotype_list;
                                  soft_filter_vcf_mod_tracks;
-                                 soft_filter_vcf_tsv;
+                                 soft_filter_vcf_tsv
                                }
 
 
@@ -869,7 +846,7 @@ process generate_strain_list {
 
 }
 
-isotype_list.into {
+isotype_list.set {
     sample_files_list;
 }
 
@@ -1246,7 +1223,7 @@ process imputation {
 
         parallel --verbose perform_imputation {} ::: I II III IV V X MtDNA
 
-        bcftools concat I.vcf.gz II.vcf.gz III.vcf.gz IV.vcf.gz V.vcf.gz X.vcf.gz MtDNA.vcf.gz > WI.${date}.impute.vcf.gz
+        bcftools concat -O z I.vcf.gz II.vcf.gz III.vcf.gz IV.vcf.gz V.vcf.gz X.vcf.gz MtDNA.vcf.gz > WI.${date}.impute.vcf.gz
         bcftools index --threads=${task.cpus} WI.${date}.impute.vcf.gz
         tabix WI.${date}.impute.vcf.gz
         bcftools stats --verbose WI.${date}.impute.vcf.gz > WI.${date}.impute.stats.txt
