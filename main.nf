@@ -758,17 +758,14 @@ process concatenate_union_vcf {
     tag { chrom }
 
     input:
-        val merge_vcf from soft_annotated_vcf.collect()
+        file(merge_vcf) from soft_annotated_vcf.collect()
 
     output:
         set file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi") into soft_filtered_concatenated
         set val("soft"), file("WI.${date}.soft-filter.vcf.gz"), file("WI.${date}.soft-filter.vcf.gz.csi") into soft_sample_summary
+        file("WI.${date}.soft-filter.stats.txt") into soft_filter_stats
 
     """
-        for i in ${merge_vcf.join(" ")}; do
-            ln  -s \${i} `basename \${i}`;
-        done;
-        chrom_set="";
         bcftools concat --threads ${task.cpus-1} -O z ${contig_raw_vcf.join(" ")} > WI.${date}.soft-filter.vcf.gz
         bcftools index  --threads ${task.cpus} WI.${date}.soft-filter.vcf.gz
         bcftools stats --verbose WI.${date}.soft-filter.vcf.gz > WI.${date}.soft-filter.stats.txt
